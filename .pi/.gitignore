@@ -1,0 +1,6 @@
+# Only the ledger travels with the code; everything else in .pi is machine-local.
+*
+!.gitignore
+!plans/
+plans/*/transcripts/
+plans/*/**/*.log

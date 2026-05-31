@@ -171,7 +171,9 @@ const LoopParams = {
 		verifyCommand: { type: "string", description: "Optional explicit command the tester should run to verify." },
 		maxRounds: { type: "number", description: "Max dev->test->fix rounds (default 3)." },
 		cwd: { type: "string", description: "Working directory of the target repo (default current)." },
-		resume: { type: "boolean", description: "Resume an in-progress task in this repo instead of starting new." },
+		resume: { type: "boolean", description: "Resume a paused/in-progress task in this repo instead of starting new." },
+		approve: { type: "boolean", description: "Approve the current gate (plan at start, ship after success) and continue." },
+		reject: { type: "string", description: "Reject the current gate with feedback; the task is halted for revision." },
 	},
 	required: [],
 } as const;
@@ -181,11 +183,13 @@ export default function (pi: ExtensionAPI) {
 		name: "loop",
 		label: "Dev-Test-Fix Loop",
 		description: [
-			"Run a DETERMINISTIC developer->tester->fix loop on a task, with a hard round cap and an",
-			"on-disk ledger (.pi/plans/<task>/) for resume. The tester emits a 3-valued verdict",
-			"(success/partial/blocked/fail); on 'fail' the controller feeds the verdict back to the",
-			"developer and retries until success or maxRounds. Use { resume: true } to continue an",
-			"interrupted task. Reuses the crew agents (developer, tester).",
+			"Run a DETERMINISTIC developer->tester->fix loop on a task, with two human gates, a hard",
+			"round cap, and an on-disk ledger (.pi/plans/<task>/) for resume. GATE 1 (plan): starting a",
+			"task pauses for the founder's approval of the plan before any code runs. The dev->test->fix",
+			"rounds then run (tester verdict success/partial/blocked/fail; on 'fail' the verdict is fed",
+			"back and retried until success or maxRounds). GATE 2 (ship): on success it pauses again for",
+			"the founder's approval before marking done. Approve a gate with { resume: true, approve: true }",
+			"or revise with { resume: true, reject: '<feedback>' }. Reuses the crew agents (developer, tester).",
 		].join(" "),
 		parameters: LoopParams as any,
 
@@ -204,7 +208,7 @@ export default function (pi: ExtensionAPI) {
 				if (!params.task) {
 					return { content: [{ type: "text", text: "Provide `task` to start, or `resume: true`." }] };
 				}
-				state = initLedger(cwd, params.task, maxRounds);
+				state = initLedger(cwd, params.task, maxRounds, params.verifyCommand);
 			}
 
 			const slug = state.slug;
@@ -215,11 +219,81 @@ export default function (pi: ExtensionAPI) {
 				transcript.push(line);
 				onUpdate?.({ content: [{ type: "text", text: transcript.join("\n") }] });
 			};
+			const done = () => ({ content: [{ type: "text", text: transcript.join("\n") }] });
+			const verifyCommand = state.verifyCommand ?? params.verifyCommand;
 
 			emit(`Loop: "${state.task}" (slug=${slug}, maxRounds=${state.maxRounds})`);
 
+			// ---- GATE 1: PLAN APPROVAL (before any code runs) ----
+			if (!state.gate1Approved) {
+				if (params.reject) {
+					state.state = "escalated";
+					writeState(cwd, state);
+					appendLog(cwd, slug, { type: "gate1_rejected", feedback: params.reject });
+					emit(`Plan rejected: ${params.reject}\nTask halted. Start a new task with the revised intent.`);
+					return done();
+				}
+				if (params.approve) {
+					state.gate1Approved = true;
+					state.state = "in_progress";
+					writeState(cwd, state);
+					appendLog(cwd, slug, { type: "gate1_approved" });
+					emit("Plan approved. Starting dev->test->fix rounds.");
+				} else {
+					const plan = [
+						`# Plan: ${state.task}`,
+						"",
+						`- Working directory: ${cwd}`,
+						`- Verify command: ${verifyCommand ?? "(developer/tester will infer the project's tests)"}`,
+						`- Developer: ${developer.model ?? "default"} implements; controller runs verify (exit code = ground truth).`,
+						`- Tester: ${tester.model ?? "default"} judges intent and catches cheats.`,
+						`- Up to ${state.maxRounds} fix rounds, then escalate.`,
+						"",
+					].join("\n");
+					fs.writeFileSync(path.join(taskDir(cwd, slug), "plan.md"), `${plan}\n`);
+					state.state = "planning";
+					writeState(cwd, state);
+					appendLog(cwd, slug, { type: "gate1_awaiting" });
+					emit(
+						`\n=== GATE 1 / PLAN — approval needed ===\n${plan}\n` +
+							`Approve:  loop({ resume: true, approve: true })\n` +
+							`Revise:   loop({ resume: true, reject: "<what to change>" })`,
+					);
+					return done();
+				}
+			}
+
 			let devContext = `Implement this task in ${cwd}:\n${state.task}`;
-			if (params.verifyCommand) devContext += `\n\nVerify with: ${params.verifyCommand}`;
+			if (verifyCommand) devContext += `\n\nVerify with: ${verifyCommand}`;
+
+			// ---- GATE 2 resume: founder decides on a task that already passed verification ----
+			if (state.state === "awaiting_ship") {
+				if (params.reject) {
+					state.state = "in_progress";
+					writeState(cwd, state);
+					appendLog(cwd, slug, { type: "gate2_rejected", feedback: params.reject });
+					emit(`Ship rejected: ${params.reject}\nReopening for another round.`);
+					devContext =
+						`Continue task in ${cwd}: ${state.task}\n\n` +
+						`The work passed verification but the founder asked for changes:\n${params.reject}\n\nApply these.`;
+					// fall through into the round loop
+				} else if (params.approve) {
+					state.gate2Approved = true;
+					state.state = "done";
+					writeState(cwd, state);
+					appendLog(cwd, slug, { type: "gate2_approved" });
+					appendLog(cwd, slug, { type: "task_done", round: state.round });
+					emit(`SHIPPED. Task done. Ledger: ${path.relative(cwd, taskDir(cwd, slug))}`);
+					return done();
+				} else {
+					emit(
+						`\n=== GATE 2 / SHIP — approval needed ===\nTask "${state.task}" passed verification and is awaiting your sign-off.\n` +
+							`Approve:  loop({ resume: true, approve: true })\n` +
+							`Revise:   loop({ resume: true, reject: "<what to change>" })`,
+					);
+					return done();
+				}
+			}
 
 			while (state.round < state.maxRounds) {
 				state.round += 1;
@@ -245,7 +319,7 @@ export default function (pi: ExtensionAPI) {
 				writeHandoff(cwd, slug, devHandoff);
 
 				// ---- VERIFY (controller runs it; exit code = GROUND TRUTH) ----
-				const verifyCmd: string | undefined = params.verifyCommand ?? devBlock?.howToVerify;
+				const verifyCmd: string | undefined = verifyCommand ?? devBlock?.howToVerify;
 				let verifyExit: number | null = null;
 				let verifyOutput = "";
 				if (verifyCmd) {
@@ -306,18 +380,25 @@ export default function (pi: ExtensionAPI) {
 
 				// ---- DECIDE ----
 				if (successState === "success") {
-					state.state = "done";
+					// ---- GATE 2: SHIP APPROVAL (verification passed; founder OKs before done) ----
+					state.state = "awaiting_ship";
 					writeState(cwd, state);
-					appendLog(cwd, slug, { type: "task_done", round });
-					emit(`DONE in ${round} round(s). Ledger: ${path.relative(cwd, taskDir(cwd, slug))}`);
-					return { content: [{ type: "text", text: transcript.join("\n") }] };
+					appendLog(cwd, slug, { type: "gate2_awaiting", round });
+					emit(
+						`\n=== GATE 2 / SHIP — approval needed (round ${round}) ===\n` +
+							`Verification passed and the tester judged the work satisfies: ${state.task}\n` +
+							`Summary: ${testHandoff.summary}\n` +
+							`Approve:  loop({ resume: true, approve: true })\n` +
+							`Revise:   loop({ resume: true, reject: "<what to change>" })`,
+					);
+					return done();
 				}
 				if (successState === "partial" || successState === "blocked") {
 					state.state = "escalated";
 					writeState(cwd, state);
 					appendLog(cwd, slug, { type: "escalated", round, successState });
 					emit(`ESCALATED (${successState}). Founder input needed. See ${path.relative(cwd, taskDir(cwd, slug))}.`);
-					return { content: [{ type: "text", text: transcript.join("\n") }] };
+					return done();
 				}
 				// fail -> feed verify output + tester diagnosis back to developer for next round
 				devContext =
@@ -332,7 +413,7 @@ export default function (pi: ExtensionAPI) {
 			writeState(cwd, state);
 			appendLog(cwd, slug, { type: "rounds_exhausted", round: state.maxRounds });
 			emit(`STOPPED after ${state.maxRounds} rounds without success. Escalating to founder.`);
-			return { content: [{ type: "text", text: transcript.join("\n") }] };
+			return done();
 		},
 	});
 }

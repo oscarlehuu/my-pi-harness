@@ -12,8 +12,9 @@ export type SuccessState = "success" | "partial" | "blocked" | "fail";
 export interface LedgerState {
 	task: string;
 	slug: string;
-	state: "planning" | "in_progress" | "done" | "escalated";
+	state: "planning" | "in_progress" | "awaiting_ship" | "done" | "escalated";
 	workingDirectory: string;
+	verifyCommand?: string;
 	round: number;
 	maxRounds: number;
 	lastReviewedHandoffCount: number;
@@ -84,7 +85,7 @@ function atomicWriteJson(p: string, data: unknown): void {
 	fs.renameSync(tmp, p);
 }
 
-export function initLedger(workingDir: string, task: string, maxRounds: number): LedgerState {
+export function initLedger(workingDir: string, task: string, maxRounds: number, verifyCommand?: string): LedgerState {
 	ensureGitignore(workingDir);
 	const slug = slugify(task);
 	const dir = taskDir(workingDir, slug);
@@ -97,8 +98,9 @@ export function initLedger(workingDir: string, task: string, maxRounds: number):
 	const state: LedgerState = {
 		task,
 		slug,
-		state: "in_progress",
+		state: "planning",
 		workingDirectory: workingDir,
+		verifyCommand,
 		round: 0,
 		maxRounds,
 		lastReviewedHandoffCount: 0,
@@ -161,7 +163,7 @@ export function findResumable(workingDir: string): LedgerState | null {
 		if (fs.existsSync(sp)) {
 			try {
 				const st = JSON.parse(fs.readFileSync(sp, "utf-8")) as LedgerState;
-				if (st.state === "in_progress" || st.state === "escalated") candidates.push(st);
+				if (st.state !== "done") candidates.push(st);
 			} catch {}
 		}
 	}

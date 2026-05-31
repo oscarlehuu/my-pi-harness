@@ -9,7 +9,7 @@
           "id": "claude-opus-4-8",
           "name": "Opus 4.8 (CTO + Tester)",
           "reasoning": true,
-          "thinkingLevelMap": { "xhigh": "xhigh" },
+          "thinkingLevelMap": { "high": "high", "xhigh": "xhigh" },
           "input": ["text", "image"],
           "contextWindow": 1000000,
           "maxTokens": 128000

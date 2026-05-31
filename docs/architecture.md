@@ -1,17 +1,20 @@
 # Architecture Decisions
 
 ## How pi loads (verified from /tmp/pi-src)
-- Agent dir = `PI_CODING_AGENT_DIR` (overrides default `~/.pi/agent`). config.ts:485-490.
-- pi reads fixed names under it: `extensions/`, `agents/`, `skills/`, `prompts/`, `themes/`,
+- Agent dir defaults to `~/.pi/agent`; `PI_CODING_AGENT_DIR` overrides it completely. config.ts:485-490.
+- pi reads fixed names under the agent dir: `extensions/`, `agents/`, `skills/`, `prompts/`, `themes/`,
   `models.json`, `AGENTS.md`, `auth.json`, `sessions/`. resource-loader.ts:646-657, config.ts.
 - Extensions: every `*.ts`/`*.js` under `extensions/` auto-loaded via jiti (NO build step).
   package-manager.ts:191,292; loader.ts:2,15. Entry = folder with `index.ts`, `default export fn(pi)`.
 - Project scope: pi ALSO merges `<cwd>/.pi/{extensions,agents,...}` on top (scope:"project").
 
-## Repo = running config
-- `PI_CODING_AGENT_DIR=<repo>/agent` → pi runs from source. No install/symlink/copy of harness files.
-- auth.json + settings.json symlinked from ~/.pi/agent → machine-local, gitignored. Logins preserved.
-- Verified: handshake runs from repo, models route correctly, auth works (cost 0 = subscription).
+## ~/.pi/agent = live harness; repo = versioned source
+- `~/.pi/agent` is the machine-wide live pi directory.
+- `my-pi-harness/agent` is the committed source. `setup.sh` symlinks AGENTS.md, agents/, extensions/,
+  and models.json into `~/.pi/agent`.
+- auth.json, settings.json, sessions/ stay real machine-local files under `~/.pi/agent`.
+- Normal use: do NOT set `PI_CODING_AGENT_DIR`; just run `pi` from any project.
+- Verified: default `pi` sees cliproxy + openai-codex models and runs Opus 4.8 by default.
 
 ## Core vs Workflows (no duplication)
 - CORE (once): `agents/` (crew) + `extensions/subagent/` (spawn primitive).

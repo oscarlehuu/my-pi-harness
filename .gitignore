@@ -1,4 +1,4 @@
-# Secrets / machine-local — never commit (symlinked into agent/ from ~/.pi)
+# Machine-local runtime files — ~/.pi/agent is live; this repo only stores harness source.
 agent/auth.json
 agent/settings.json
 agent/sessions/

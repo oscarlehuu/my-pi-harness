@@ -3,23 +3,24 @@
 A reusable harness for running many projects on **pi** (Pi Coding Agent). The "company" is the
 founder; this repo is the tooling. Built BY pi, FOR running pi. Philosophy: primitives, not features.
 
-## How it runs (no install step)
+## How it runs
 
-pi reads its config from whatever `PI_CODING_AGENT_DIR` points at. We point it at this repo's
-`agent/` folder, so **the repo IS the running config** — edit a file, it's live.
+`~/.pi/agent` is the live, machine-wide pi directory. This repo is the versioned source for the
+harness. `setup.sh` symlinks the committed harness files into `~/.pi/agent`, while secrets and
+sessions stay machine-local there.
 
 ```bash
-source setup.sh          # exports PI_CODING_AGENT_DIR=<repo>/agent
-pi                       # now runs the harness
+./setup.sh               # one-time / update: installs symlinks into ~/.pi/agent
+pi                       # no PI_CODING_AGENT_DIR export needed
 ```
 
-Secrets (`auth.json`, `settings.json`) are symlinked from `~/.pi/agent` and gitignored — they stay
-machine-local, never committed. Logins are preserved.
+Do **not** set `PI_CODING_AGENT_DIR` for normal use. That env var replaces `~/.pi/agent`; we only use
+it for temporary experiments.
 
 ## Architecture: core vs workflows
 
 ```
-agent/                         ← what pi reads (folder names fixed by pi's contract)
+agent/                         ← source for what setup.sh installs into ~/.pi/agent
   AGENTS.md                    CTO persona (governance)
   models.json                  model routing (cliproxy + codex, :thinking inline)
   agents/                      CORE CREW — shared by every workflow, defined ONCE
@@ -37,10 +38,12 @@ agent/                         ← what pi reads (folder names fixed by pi's con
 
 | Role | Model | Notes |
 |------|-------|-------|
-| CTO (main session) | cliproxy/claude-opus-4-8 | the founder talks to this |
+| CTO (main session) | cliproxy/claude-opus-4-8:xhigh | default/max reasoning; founder talks to this |
 | scout | cliproxy/gemini-3.5-flash-low:high | recon, read-only |
 | developer | openai-codex/gpt-5.5:xhigh | implements, full tools |
-| tester | cliproxy/claude-opus-4-8:high | runs tests, PASS/FAIL/partial, read-only |
+| tester | cliproxy/claude-opus-4-8:high | judges verification, read-only |
+
+pi's valid thinking levels are `off|minimal|low|medium|high|xhigh`; we use `xhigh` as "max".
 
 cliproxy agents use **append-only** system prompt (preserves Claude Code marker → Max subscription quota, not credits).
 

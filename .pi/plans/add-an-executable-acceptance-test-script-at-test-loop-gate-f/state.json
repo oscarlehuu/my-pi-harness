@@ -1,0 +1,14 @@
+{
+  "task": "Add an executable acceptance test script at test/loop/gate_flow_test.sh that exercises the loop tool gate flow end-to-end: it should create a temp git repo with a broken add() function and a pytest, then drive the loop via the pi CLI through Gate 1 (start -> approve), the dev-test-fix rounds, and Gate 2 (approve), asserting the ledger state transitions planning->in_progress->awaiting_ship->done and that the final code passes pytest. Exit 0 only if all assertions pass.",
+  "slug": "add-an-executable-acceptance-test-script-at-test-loop-gate-f",
+  "state": "done",
+  "workingDirectory": "/Users/a1241968/Desktop/Oscar/my-pi-harness",
+  "verifyCommand": "bash test/loop/gate_flow_test.sh",
+  "round": 2,
+  "maxRounds": 3,
+  "lastReviewedHandoffCount": 4,
+  "gate1Approved": true,
+  "gate2Approved": true,
+  "createdAt": "2026-05-31T06:22:45.745Z",
+  "updatedAt": "2026-05-31T10:17:54.493Z"
+}

@@ -25,3 +25,14 @@ The exact command the tester should run (e.g. `pytest test_math.py -q`).
 
 ## Notes
 Anything the CTO/tester should know (assumptions, edge cases).
+
+## MACHINE BLOCK (MANDATORY — end your response with this exact block)
+The loop controller parses this. Emit valid JSON between the markers:
+
+---DEV-JSON---
+{
+  "summary": "1-2 sentences of what you did",
+  "filesChanged": [ "path - what changed" ],
+  "howToVerify": "the exact command the tester should run"
+}
+---END-DEV-JSON---

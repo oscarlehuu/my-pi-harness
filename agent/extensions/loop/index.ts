@@ -67,6 +67,23 @@ interface RunResult {
 	stderr: string;
 }
 
+/** Run the verify command directly. Exit code is GROUND TRUTH for pass/fail (decision B). */
+function runVerify(command: string, cwd: string, signal?: AbortSignal): Promise<{ exitCode: number; output: string }> {
+	return new Promise((resolve) => {
+		const proc = spawn(command, { cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+		let output = "";
+		proc.stdout.on("data", (d) => {
+			output += d.toString();
+		});
+		proc.stderr.on("data", (d) => {
+			output += d.toString();
+		});
+		proc.on("close", (code) => resolve({ exitCode: code ?? 0, output: output.slice(-8000) }));
+		proc.on("error", (e) => resolve({ exitCode: 1, output: String(e) }));
+		if (signal) signal.addEventListener("abort", () => proc.kill("SIGTERM"));
+	});
+}
+
 /** Spawn one agent subprocess, collect final text output. Append-only system prompt (quota-safe). */
 async function runAgent(agent: AgentDef, task: string, cwd: string, signal?: AbortSignal): Promise<RunResult> {
 	const args = ["--mode", "json", "-p", "--no-session"];
@@ -227,15 +244,44 @@ export default function (pi: ExtensionAPI) {
 				};
 				writeHandoff(cwd, slug, devHandoff);
 
-				// ---- TESTER ----
+				// ---- VERIFY (controller runs it; exit code = GROUND TRUTH) ----
+				const verifyCmd: string | undefined = params.verifyCommand ?? devBlock?.howToVerify;
+				let verifyExit: number | null = null;
+				let verifyOutput = "";
+				if (verifyCmd) {
+					emit(`Round ${round}: verify \`${verifyCmd}\`...`);
+					const v = await runVerify(verifyCmd, cwd, signal);
+					verifyExit = v.exitCode;
+					verifyOutput = v.output;
+					appendLog(cwd, slug, { type: "verify_ran", round, command: verifyCmd, exitCode: verifyExit });
+				}
+
+				// ---- TESTER (judges intent; cannot override a non-zero exit into success) ----
 				emit(`Round ${round}: tester...`);
-				const verifyCmd = params.verifyCommand ?? devBlock?.howToVerify ?? "(infer the project's test command)";
-				const testerTask = `Verify the work in ${cwd} for task: ${state.task}\nRun: ${verifyCmd}\nThen emit your verdict block.`;
+				const verifyInfo =
+					verifyExit === null
+						? "No verify command was provided; run the project's tests yourself to check."
+						: `The verify command \`${verifyCmd}\` already ran. Exit code: ${verifyExit} (0 = passed).\nOutput:\n${verifyOutput.slice(-3000)}`;
+				const testerTask =
+					`Judge whether the work in ${cwd} satisfies this task: ${state.task}\n\n${verifyInfo}\n\n` +
+					`Read the changed files to confirm the change actually fulfills the task intent (not just that ` +
+					`a command exited 0 — watch for cheats like hardcoding or editing tests). Then emit your VERDICT line.`;
 				const testSession = randomUUID();
 				const testRun = await runAgent(tester, testerTask, cwd, signal);
+				const { successState: judged, parsedFrom } = parseVerdict(testRun.text);
 
-				// Decision #11: controller ALWAYS writes a handoff. Parse the `VERDICT: <STATE>` token.
-				const { successState, parsedFrom } = parseVerdict(testRun.text);
+				// Combine ground truth (exit code) with the tester's judgment.
+				let successState: SuccessState;
+				if (verifyExit !== null && verifyExit !== 0) {
+					successState = "fail"; // ground truth wins: a failing command is never success
+				} else if (verifyExit === 0) {
+					// command passed; tester may still flag fail/partial/blocked on intent grounds
+					successState = judged === "success" || parsedFrom === "no-verdict-token" ? "success" : judged;
+				} else {
+					// no verify command ran; rely on tester judgment
+					successState = judged;
+				}
+
 				const summaryLine =
 					testRun.text
 						.split("\n")
@@ -248,14 +294,15 @@ export default function (pi: ExtensionAPI) {
 					sessionId: testSession,
 					successState,
 					summary: summaryLine.slice(0, 200),
+					verification: verifyExit === null ? undefined : { commandsRun: [{ command: verifyCmd!, exitCode: verifyExit, observation: verifyOutput.slice(-500) }] },
 					raw: testRun.text,
 				};
 				writeHandoff(cwd, slug, testHandoff);
-				appendLog(cwd, slug, { type: "verdict_parsed", round, parsedFrom });
+				appendLog(cwd, slug, { type: "verdict", round, successState, verifyExit, parsedFrom });
 				state.lastReviewedHandoffCount = listHandoffs(cwd, slug).length;
 				writeState(cwd, state);
 
-				emit(`Round ${round}: verdict = ${successState.toUpperCase()} — ${testHandoff.summary}`);
+				emit(`Round ${round}: ${successState.toUpperCase()} (verify exit=${verifyExit ?? "n/a"}) — ${testHandoff.summary}`);
 
 				// ---- DECIDE ----
 				if (successState === "success") {
@@ -272,11 +319,12 @@ export default function (pi: ExtensionAPI) {
 					emit(`ESCALATED (${successState}). Founder input needed. See ${path.relative(cwd, taskDir(cwd, slug))}.`);
 					return { content: [{ type: "text", text: transcript.join("\n") }] };
 				}
-				// fail -> feed the tester's full verdict text back to developer for next round
+				// fail -> feed verify output + tester diagnosis back to developer for next round
 				devContext =
 					`Continue task in ${cwd}: ${state.task}\n\n` +
-					`The tester returned FAIL on round ${round}. Fix ONLY what it points to:\n\n` +
-					testHandoff.raw.slice(0, 2000);
+					`Round ${round} FAILED.` +
+					(verifyExit !== null ? ` Verify \`${verifyCmd}\` exited ${verifyExit}.\nOutput:\n${verifyOutput.slice(-1500)}\n\n` : "\n\n") +
+					`Tester diagnosis:\n${testHandoff.raw.slice(0, 1500)}\n\nFix ONLY what these point to.`;
 			}
 
 			// rounds exhausted

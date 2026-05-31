@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-05-31T13:24:58.123Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "abc03bef-438a-4b2b-85ef-c42a43f45abc",
+  "summary": "Updated AskUserQuestion per-choice note display to render only when text exists or the note is actively being edited, without changing stored data or result shape.",
+  "filesChanged": [
+    "extensions/AskUserQuestion/index.ts - changed per-choice note render condition and removed empty focused placeholder",
+    "extensions/AskUserQuestion/logic.ts - added exported shouldRenderChoiceNote predicate",
+    "extensions/AskUserQuestion/test/logic_test.sh - added headless predicate assertions"
+  ],
+  "howToVerify": "bash extensions/AskUserQuestion/test/logic_test.sh",
+  "raw": "## Completed\nPolished per-choice note rendering so empty notes no longer show placeholders just because an option is focused/selected. Empty note input still renders while actively editing.\n\n## Files Changed\n- `extensions/AskUserQuestion/index.ts` - per-choice note display now uses `hasNote || editing`; removed focused placeholder fallback.\n- `extensions/AskUserQuestion/logic.ts` - added exported `shouldRenderChoiceNote(hasText, editing)` predicate.\n- `extensions/AskUserQuestion/test/logic_test.sh` - added headless assertions for the display predicate.\n\n## How To Verify\n`bash extensions/AskUserQuestion/test/logic_test.sh`\n\n## Notes\nVerification passed locally.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n---DEV-JSON---\n{\n  \"summary\": \"Updated AskUserQuestion per-choice note display to render only when text exists or the note is actively being edited, without changing stored data or result shape.\",\n  \"filesChanged\": [\n    \"extensions/AskUserQuestion/index.ts - changed per-choice note render condition and removed empty focused placeholder\",\n    \"extensions/AskUserQuestion/logic.ts - added exported shouldRenderChoiceNote predicate\",\n    \"extensions/AskUserQuestion/test/logic_test.sh - added headless predicate assertions\"\n  ],\n  \"howToVerify\": \"bash extensions/AskUserQuestion/test/logic_test.sh\"\n}\n---END-DEV-JSON---"
+}

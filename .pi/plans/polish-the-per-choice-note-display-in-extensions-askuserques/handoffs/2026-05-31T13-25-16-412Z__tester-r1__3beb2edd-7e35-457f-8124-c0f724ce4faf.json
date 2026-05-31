@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-05-31T13:25:16.412Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "3beb2edd-7e35-457f-8124-c0f724ce4faf",
+  "successState": "success",
+  "summary": "All requirements met:",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "bash extensions/AskUserQuestion/test/logic_test.sh",
+        "exitCode": 0,
+        "observation": "AskUserQuestion theme.bg allowed-color guard passed\nAskUserQuestion pure logic tests passed\n"
+      }
+    ]
+  },
+  "raw": "All requirements met:\n- `shouldRenderChoiceNote(hasText, editing)` returns `hasText || editing` — no longer triggers on focus/selected (logic.ts:67).\n- Render call uses it with `hasNote` and `editing` (index.ts:266).\n- Editing with empty text still shows input (renderChoiceNote handles `editing` first).\n- Question-note section unchanged; no data/return changes.\n- Headless test asserts all three cases (false/false→false, false/true→true, true/false→true).\n\nVERDICT: PASS"
+}

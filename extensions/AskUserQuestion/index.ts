@@ -26,6 +26,7 @@ import {
 	setChoiceNote,
 	setNote,
 	setQuestionState,
+	shouldRenderChoiceNote,
 	toggleFocusedOption,
 	type AskUserQuestionFocusState,
 	type AskUserQuestionItem,
@@ -262,7 +263,7 @@ class AskUserQuestionDialog extends Container implements Focusable {
 
 			const hasNote = getChoiceNote(question, state, index).trim() !== "";
 			const editing = this.focusState.mode === "choice-note" && this.focusState.activeChoiceNoteIndex === index;
-			if (focused || selected || hasNote || editing) {
+			if (shouldRenderChoiceNote(hasNote, editing)) {
 				this.renderChoiceNote(question, state, index);
 			}
 		}
@@ -279,11 +280,6 @@ class AskUserQuestionDialog extends Container implements Focusable {
 		const note = getChoiceNote(question, state, optionIndex).trim();
 		if (note) {
 			this.addText(this.theme.fg("muted", `    Per-choice note: ${note}`));
-			return;
-		}
-
-		if (optionIndex === state.focusedIndex) {
-			this.addText(this.theme.fg("muted", "    Per-choice note: (Tab to edit)"));
 		}
 	}
 

@@ -64,6 +64,10 @@ export interface AskUserQuestionStructuredResult {
 
 export type OptionListEnterAction = "advance" | "submit";
 
+export function shouldRenderChoiceNote(hasText: boolean, editing: boolean): boolean {
+	return hasText || editing;
+}
+
 export function decideOptionListEnterAction(currentQuestionIndex: number, totalQuestions: number): OptionListEnterAction {
 	return currentQuestionIndex < totalQuestions - 1 ? "advance" : "submit";
 }

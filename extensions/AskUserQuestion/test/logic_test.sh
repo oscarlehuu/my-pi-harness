@@ -47,6 +47,21 @@ let state = logic.createInitialSelectionState(single);
 assert.equal(state.focusedIndex, 0, "initial focus starts on first option");
 assert.deepEqual(state.selectedIndexes, [], "initial single selection is empty");
 assert.deepEqual(state.choiceNotes, {}, "initial per-choice notes are empty");
+assert.equal(
+  logic.shouldRenderChoiceNote(false, false),
+  false,
+  "empty per-choice note does not render when it is not being edited",
+);
+assert.equal(
+  logic.shouldRenderChoiceNote(false, true),
+  true,
+  "empty per-choice note still renders while editing so the user can type",
+);
+assert.equal(
+  logic.shouldRenderChoiceNote(true, false),
+  true,
+  "non-empty per-choice note renders outside edit mode",
+);
 
 state = logic.moveFocus(single, state, 1);
 state = logic.toggleFocusedOption(single, state);

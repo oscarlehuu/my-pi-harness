@@ -1,0 +1,27 @@
+{
+  "providers": {
+    "cliproxy": {
+      "baseUrl": "http://localhost:8317/v1",
+      "api": "openai-completions",
+      "apiKey": "pi-local-7c3f9a2e8b1d4f6a0c2e5b8d",
+      "models": [
+        {
+          "id": "claude-opus-4-8",
+          "name": "Opus 4.8 (CTO + Tester)",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 200000,
+          "maxTokens": 32000
+        },
+        {
+          "id": "gemini-3.5-flash-low",
+          "name": "Gemini 3.5 Flash",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 1048576,
+          "maxTokens": 32000
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+# Secrets / machine-local — never commit (symlinked into agent/ from ~/.pi)
+agent/auth.json
+agent/settings.json
+agent/sessions/
+agent/bin/
+agent/*-debug.log
+
+# OS / editor noise
+.DS_Store
+.antigravitycli/
+.claude/
+
+# Ledger noise inside any project we run (only .pi/plans/ ledger is committed in target repos)
+*.log
+*.tmp

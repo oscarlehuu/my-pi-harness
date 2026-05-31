@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-05-31T12:20:30.949Z",
+  "role": "developer",
+  "round": 2,
+  "sessionId": "eb58e58e-e431-425a-9d4f-912d5847c6e6",
+  "summary": "Added back/forward question navigation, visible full question header list, per-choice notes keyed by selected option label, and preserved whole-question notes.",
+  "filesChanged": [
+    "extensions/AskUserQuestion/index.ts - updated interactive dialog for navigation and per-choice notes",
+    "extensions/AskUserQuestion/logic.ts - added pure per-choice note and navigation state logic",
+    "extensions/AskUserQuestion/test/logic_test.sh - added tests for per-choice note set/clear, whole-question notes, and back/forward navigation"
+  ],
+  "howToVerify": "bash extensions/AskUserQuestion/test/logic_test.sh",
+  "raw": "## Completed\nApplied requested AskUserQuestion changes:\n- Back/forward question navigation with all headers visible and current question indicated.\n- Per-selected-choice notes plus existing whole-question note.\n- Return shape now includes `choiceNotes` keyed by option label.\n- Pure logic/tests updated for choice-note set/clear, whole-question note, and navigation state.\n\n## Files Changed\n- `extensions/AskUserQuestion/index.ts` - interactive dialog/navigation/per-choice note UI using `ctx.ui.custom` and `Container/Text/Input`.\n- `extensions/AskUserQuestion/logic.ts` - pure exported selection, notes, result, and navigation logic.\n- `extensions/AskUserQuestion/test/logic_test.sh` - expanded unit coverage.\n\n## How To Verify\n`bash extensions/AskUserQuestion/test/logic_test.sh`\n\n## Notes\nVerification passed locally.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n---DEV-JSON---\n{\n  \"summary\": \"Added back/forward question navigation, visible full question header list, per-choice notes keyed by selected option label, and preserved whole-question notes.\",\n  \"filesChanged\": [\n    \"extensions/AskUserQuestion/index.ts - updated interactive dialog for navigation and per-choice notes\",\n    \"extensions/AskUserQuestion/logic.ts - added pure per-choice note and navigation state logic\",\n    \"extensions/AskUserQuestion/test/logic_test.sh - added tests for per-choice note set/clear, whole-question notes, and back/forward navigation\"\n  ],\n  \"howToVerify\": \"bash extensions/AskUserQuestion/test/logic_test.sh\"\n}\n---END-DEV-JSON---"
+}

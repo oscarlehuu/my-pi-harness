@@ -1,0 +1,11 @@
+{"timestamp":"2026-05-31T12:53:18.104Z","type":"task_started","task":"Fix a runtime crash in extensions/AskUserQuestion/index.ts. When the dialog renders, pi throws: Unknown theme background color: accent — at renderQuestionTabs (index.ts:240) which calls this.theme.bg(\"accent\", ...). The pi theme bg() only accepts these ThemeBg values: selectedBg, userMessageBg, customMessageBg, toolPendingBg, toolSuccessBg, toolErrorBg (verified in pi-src theme.ts:153). \"accent\" is a valid FOREGROUND (fg) color but NOT a valid background. Fix: for the ACTIVE/current question tab highlight, use a valid background color (selectedBg) instead of accent; keep inactive tabs as-is. Audit the ENTIRE file for ANY other theme.bg(...) calls using invalid color names and fix them the same way. Then add a guard to the test so this class of bug is caught headlessly: in extensions/AskUserQuestion/test/logic_test.sh, statically assert that every theme.bg(\"...\") call in index.ts uses only the allowed ThemeBg names (grep the source and fail if any disallowed name like accent is passed to bg). Do not change behavior other than the color fix. Keep all existing features (tabs, arrow nav, space select, Tab note cycling, per-choice + whole-question notes, headless fallback)."}
+{"timestamp":"2026-05-31T12:53:18.108Z","type":"gate1_awaiting"}
+{"timestamp":"2026-05-31T12:54:13.676Z","type":"gate1_approved"}
+{"timestamp":"2026-05-31T12:54:13.677Z","type":"round_started","round":1}
+{"timestamp":"2026-05-31T12:56:04.882Z","type":"developer_handoff","round":1,"summary":"Changed the active AskUserQuestion tab background from invalid accent to selectedBg and added a static test guard for invalid theme.bg colors."}
+{"timestamp":"2026-05-31T12:56:05.021Z","type":"verify_ran","round":1,"command":"bash extensions/AskUserQuestion/test/logic_test.sh","exitCode":0}
+{"timestamp":"2026-05-31T12:56:19.303Z","type":"tester_verdict","round":1,"successState":"success","summary":"All checks pass:"}
+{"timestamp":"2026-05-31T12:56:19.303Z","type":"verdict","round":1,"successState":"success","verifyExit":0,"parsedFrom":"verdict-token"}
+{"timestamp":"2026-05-31T12:56:19.304Z","type":"gate2_awaiting","round":1}
+{"timestamp":"2026-05-31T13:13:06.143Z","type":"gate2_approved"}
+{"timestamp":"2026-05-31T13:13:06.143Z","type":"task_done","round":1}

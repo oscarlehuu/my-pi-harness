@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-05-31T11:13:11.762Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "51b84cbe-962d-49f7-b983-2074f09aaeb7",
+  "summary": "Added the AskUserQuestion pi extension with interactive sequential question dialogs, pure testable selection logic, and a structured headless fallback.",
+  "filesChanged": [
+    "extensions/AskUserQuestion/index.ts - registered AskUserQuestion tool and custom UI dialog",
+    "extensions/AskUserQuestion/logic.ts - exported pure selection/result/headless logic",
+    "extensions/AskUserQuestion/test/logic_test.sh - added unit tests runnable without a terminal"
+  ],
+  "howToVerify": "bash extensions/AskUserQuestion/test/logic_test.sh",
+  "raw": "## Completed\nImplemented `extensions/AskUserQuestion/` with the exact `AskUserQuestion` tool, schema, interactive `ctx.ui.custom` dialog, pure selection logic, headless fallback, and unit test.\n\n## Files Changed\n- `extensions/AskUserQuestion/index.ts` - registers the tool, renders sequential dialogs, handles notes, returns structured results.\n- `extensions/AskUserQuestion/logic.ts` - pure exported selection/result logic.\n- `extensions/AskUserQuestion/test/logic_test.sh` - terminal-free unit tests for single/multi selection, notes, and headless fallback.\n\n## How To Verify\n`bash extensions/AskUserQuestion/test/logic_test.sh`\n\n## Notes\nUses pi UI primitives cited in code: `ctx.ui.custom`, plus `Container`, `Text`, and `Input` from `@earendil-works/pi-tui`.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n---DEV-JSON---\n{\n  \"summary\": \"Added the AskUserQuestion pi extension with interactive sequential question dialogs, pure testable selection logic, and a structured headless fallback.\",\n  \"filesChanged\": [\n    \"extensions/AskUserQuestion/index.ts - registered AskUserQuestion tool and custom UI dialog\",\n    \"extensions/AskUserQuestion/logic.ts - exported pure selection/result/headless logic\",\n    \"extensions/AskUserQuestion/test/logic_test.sh - added unit tests runnable without a terminal\"\n  ],\n  \"howToVerify\": \"bash extensions/AskUserQuestion/test/logic_test.sh\"\n}\n---END-DEV-JSON---"
+}

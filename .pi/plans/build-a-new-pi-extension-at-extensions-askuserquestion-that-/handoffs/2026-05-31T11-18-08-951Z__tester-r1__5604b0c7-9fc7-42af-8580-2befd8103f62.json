@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-05-31T11:18:08.951Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "5604b0c7-9fc7-42af-8580-2befd8103f62",
+  "successState": "success",
+  "summary": "The implementation looks genuine. Let me verify the pi-tui primitives and ctx.ui.custom API actually exist as used.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "bash extensions/AskUserQuestion/test/logic_test.sh",
+        "exitCode": 0,
+        "observation": "AskUserQuestion pure logic tests passed\n"
+      }
+    ]
+  },
+  "raw": "The implementation looks genuine. Let me verify the pi-tui primitives and ctx.ui.custom API actually exist as used.\nLet me check how other extensions use the pi APIs to verify correct usage.\nLet me verify `ctx.ui.custom` exists in the pi API surface.\n`ctx.ui.custom` is a real API. Let me confirm its signature matches the usage in the extension.\nThe `custom<T>` signature matches exactly. Now let me verify the pi-tui exports used and run the test myself.\nAll imports verified. Let me check the Key and Input APIs used, then run the test.\nAll APIs verified. Now let me run the test myself to confirm.\nLet me verify the typebox import convention matches the harness.\nAll checks pass. The implementation genuinely fulfills the task:\n\n- **Tool name**: registered exactly as `AskUserQuestion` (index.ts:268)\n- **Schema parity**: exact match — `questions[].{header, question, multiSelect, options[].{label, description}}` (index.ts:27-43)\n- **Interactive mode**: uses `ctx.ui.custom<DialogResult>` (verified real API with matching signature in pi-coding-agent types.d.ts:116); renders via `Container`/`Text`/`Input`/`Spacer` from pi-tui (all verified as real exports). Arrow keys move focus, Space toggles, multi-select supported, optional free-text note via `Input`, Enter confirms, iterates all questions in sequence (index.ts:298-312)\n- **Headless mode**: `if (!ctx.hasUI) return nonInteractiveResult(...)` returns immediately with `unavailable: true` — does not hang (index.ts:281)\n- **Structured result**: maps each header → selected label(s) + note (logic.ts buildStructuredResult)\n- **Pure logic**: logic.ts has no TUI imports; all selection functions exported\n- **Test**: logic_test.sh exercises real exported functions — single-select replacement, multi-select toggle on/off, notes, structured result shape, and headless fallback shape. Not hardcoded, not cheated. I re-ran it: passes.\n- **Primitives cited**: documented in index.ts header comment (ctx.ui.custom, Container/Text/Input from pi-tui)\n\nThe test genuinely imports and asserts against `logic.ts` behavior rather than rigging the outcome, and the UI APIs used are confirmed to exist in the installed pi packages.\n\nVERDICT: PASS"
+}

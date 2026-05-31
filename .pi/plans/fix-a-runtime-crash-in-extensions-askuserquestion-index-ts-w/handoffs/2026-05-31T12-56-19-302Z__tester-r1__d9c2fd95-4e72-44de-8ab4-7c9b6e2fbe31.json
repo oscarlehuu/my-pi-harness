@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-05-31T12:56:19.302Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "d9c2fd95-4e72-44de-8ab4-7c9b6e2fbe31",
+  "successState": "success",
+  "summary": "All checks pass:",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "bash extensions/AskUserQuestion/test/logic_test.sh",
+        "exitCode": 0,
+        "observation": "AskUserQuestion pure logic tests passed\n"
+      }
+    ]
+  },
+  "raw": "All checks pass:\n\n- index.ts:240 now uses `theme.bg(\"selectedBg\", ...)` for the active tab instead of `\"accent\"`.\n- Only one `theme.bg(...)` call exists in the file, and it's valid. No other invalid bg calls.\n- The test (`logic_test.sh`) adds a real static guard: greps all `theme.bg(\"...\")` calls and fails if any color isn't in the allowed ThemeBg set. Not a hardcoded cheat.\n- Behavior is otherwise unchanged—inactive tabs still use `fg(\"success\"/\"muted\")`, and all features (tabs, nav, notes, headless fallback) remain intact.\n\nVERDICT: PASS"
+}

@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-05-31T12:44:59.434Z",
+  "role": "tester",
+  "round": 3,
+  "sessionId": "ab265da6-4429-4261-bafe-3643127a9662",
+  "successState": "success",
+  "summary": "Let me verify the extension structure matches the harness conventions and imports are valid.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "bash extensions/AskUserQuestion/test/logic_test.sh",
+        "exitCode": 0,
+        "observation": "AskUserQuestion pure logic tests passed\n"
+      }
+    ]
+  },
+  "raw": "Let me verify the extension structure matches the harness conventions and imports are valid.\nLet me confirm the pi API conventions used match other extensions.\nLet me independently re-run the test and verify it genuinely exercises logic.ts (not hardcoded).\nLet me confirm the test is genuinely coupled to logic.ts behavior (not self-contained/hardcoded) by mutating logic temporarily.\nThe mutation didn't break the test — but maybe the sed didn't match. Let me verify the mutation actually applied.\nThe sed pattern didn't match (it's an object property, not a return). Let me mutate the actual line.\nTest is genuinely coupled to `logic.ts` (mutation breaks it; restored). All requirements confirmed:\n\n- **Tool name** exactly `AskUserQuestion` (index.ts:351)\n- **Schema parity**: `questions[].{header, question, multiSelect, options[].{label, description}}` (index.ts:32-50)\n- **Interactive mode**: `ctx.ui.custom<DialogResult>` with `Container`/`Text`/`Input`/`Spacer` from pi-tui; arrow-key nav, space toggle, multi-select, free-text notes, sequential iteration (index.ts:395-400)\n- **Headless mode**: `if (!ctx.hasUI) return nonInteractiveResult(...)` returns immediately with `unavailable:true` — no hang (index.ts:368)\n- **Structured result**: maps header → selected label(s) + notes (logic.ts `buildStructuredResult`)\n- **Pure logic**: `logic.ts` has no TUI imports; all functions exported and unit-tested\n- **Test**: `logic_test.sh` imports real `logic.ts`, asserts single-replace, multi-toggle, notes, navigation, and headless fallback shape — not hardcoded\n- **Primitives cited** in index.ts header comment\n\nVERDICT: PASS"
+}

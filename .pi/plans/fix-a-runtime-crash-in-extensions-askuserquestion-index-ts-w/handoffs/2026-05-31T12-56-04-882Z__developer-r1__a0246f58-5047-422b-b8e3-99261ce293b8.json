@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-05-31T12:56:04.882Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "a0246f58-5047-422b-b8e3-99261ce293b8",
+  "summary": "Changed the active AskUserQuestion tab background from invalid accent to selectedBg and added a static test guard for invalid theme.bg colors.",
+  "filesChanged": [
+    "extensions/AskUserQuestion/index.ts - active tab highlight uses selectedBg",
+    "extensions/AskUserQuestion/test/logic_test.sh - validates theme.bg color names against allowed ThemeBg values"
+  ],
+  "howToVerify": "bash extensions/AskUserQuestion/test/logic_test.sh",
+  "raw": "## Completed\nFixed the AskUserQuestion runtime crash by changing the active question tab background from invalid `accent` to valid `selectedBg`. Added a static guard to the logic test to fail if `theme.bg(\"...\")` uses anything outside pi’s allowed ThemeBg names.\n\n## Files Changed\n- `extensions/AskUserQuestion/index.ts` - active tab highlight now uses `selectedBg`.\n- `extensions/AskUserQuestion/test/logic_test.sh` - added grep-based validation for `theme.bg(...)` color names.\n\n## How To Verify\n`bash extensions/AskUserQuestion/test/logic_test.sh`\n\n## Notes\nVerified the test passes.\n\n---DEV-JSON---\n{\n  \"summary\": \"Changed the active AskUserQuestion tab background from invalid accent to selectedBg and added a static test guard for invalid theme.bg colors.\",\n  \"filesChanged\": [\n    \"extensions/AskUserQuestion/index.ts - active tab highlight uses selectedBg\",\n    \"extensions/AskUserQuestion/test/logic_test.sh - validates theme.bg color names against allowed ThemeBg values\"\n  ],\n  \"howToVerify\": \"bash extensions/AskUserQuestion/test/logic_test.sh\"\n}\n---END-DEV-JSON---"
+}

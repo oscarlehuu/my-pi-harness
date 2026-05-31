@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-05-31T12:13:01.393Z",
+  "role": "tester",
+  "round": 3,
+  "sessionId": "83066c06-02f7-4502-98a1-766bf82f4447",
+  "successState": "success",
+  "summary": "Let me verify the extension conventions match the repo and that imports are valid.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "bash extensions/AskUserQuestion/test/logic_test.sh",
+        "exitCode": 0,
+        "observation": "AskUserQuestion pure logic tests passed\n"
+      }
+    ]
+  },
+  "raw": "Let me verify the extension conventions match the repo and that imports are valid.\nLet me verify the pi-tui primitives and ctx.ui.custom signature exist as used.\nAll imported primitives exist. Let me verify `ctx.ui.custom` signature and `Container`/`Text` exports more precisely.\nThe `ctx.ui.custom` signature matches exactly. Let me run a typecheck and the test.\nThe implementation follows repo conventions (`typebox`, `pi.registerTool`, pi-tui imports). Let me confirm the `execute` signature and `registerTool` shape match the API.\nEverything verifies. The implementation genuinely fulfills the task:\n\n- **Extension location & tool name**: `extensions/AskUserQuestion/index.ts` registers `name: \"AskUserQuestion\"` (exact match) via `pi.registerTool`.\n- **Schema parity**: `questions[].{header, question, multiSelect, options[].{label, description}}` matches exactly (index.ts:25-42).\n- **Interactive mode**: Uses `ctx.ui.custom<DialogResult>(...)` (signature confirmed against the installed pi API) with a `Container`-based `AskUserQuestionDialog` using `Text`, `Input`, `Spacer`, arrow-key navigation (`Key.up/down`), space to select/toggle, `n`/Tab for free-text note, Enter to confirm; iterates through all questions sequentially (index.ts:296-308).\n- **Headless mode**: `if (!ctx.hasUI) return nonInteractiveResult(...)` returns `createHeadlessFallback` with `uiAvailable:false, unavailable:true` — no hang (index.ts:288-290).\n- **Structured result**: `buildStructuredResult` maps each header → `{selected, note?}` (logic.ts:155-180).\n- **Pure logic**: `logic.ts` has zero pi/TUI imports; all selection functions exported and tested.\n- **Test**: `logic_test.sh` imports the real `logic.ts` (not stubbed) and asserts single-select replacement, multi-select toggle on/off, note attachment, structured result, and headless fallback shape. Passes with exit 0.\n\nThe cited primitives (`ctx.ui.custom`, `Container`/`Text`/`Input` from `@earendil-works/pi-tui`) all exist and are used correctly. The test exercises genuine behavior, not hardcoded values—no cheating.\n\nVERDICT: PASS"
+}

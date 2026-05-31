@@ -189,7 +189,8 @@ export default function (pi: ExtensionAPI) {
 			"rounds then run (tester verdict success/partial/blocked/fail; on 'fail' the verdict is fed",
 			"back and retried until success or maxRounds). GATE 2 (ship): on success it pauses again for",
 			"the founder's approval before marking done. Approve a gate with { resume: true, approve: true }",
-			"or revise with { resume: true, reject: '<feedback>' }. Drives the crew agents (developer, tester).",
+			"or revise with { resume: true, reject: '<feedback>' }. Drives the developer + tester crew agents",
+			"(the CTO can also use scout via the subagent tool for recon before starting a task).",
 		].join(" "),
 		parameters: LoopParams as any,
 

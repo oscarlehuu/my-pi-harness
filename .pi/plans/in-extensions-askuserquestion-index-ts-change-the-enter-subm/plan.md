@@ -1,0 +1,8 @@
+# Plan: In extensions/AskUserQuestion/index.ts change the Enter/submit behavior to a HYBRID stepped model. Currently Enter submits all questions from any tab. New behavior: when the user presses Enter while focused on the OPTION LIST: if the current question is NOT the last one, advance to the next question tab (do not submit yet); if it IS the last question, submit ALL questions and close. Left/Right arrows must still freely switch tabs (including jumping back to revise an earlier question) exactly as today. Enter inside a note field keeps its current meaning (commit the note / move focus per existing Tab cycling), it must NOT submit. Update the bottom hint line to reflect: Enter = next question, or submit on the last. Keep every other feature identical (tabs, up/down option nav, space select/toggle, Tab per-choice note -> question note -> options, per-choice + whole-question notes, headless fallback). Keep the navigation/submit decision as a PURE exported function (e.g. given current index + total, return advance|submit) and unit-test it. Update extensions/AskUserQuestion/test/logic_test.sh to cover: Enter advances on non-last question, Enter submits on last question, and that the static theme.bg allowed-color guard still passes.
+
+- Working directory: /Users/a1241968/Desktop/Oscar/my-pi-harness
+- Verify command: bash extensions/AskUserQuestion/test/logic_test.sh
+- Developer: openai-codex/gpt-5.5:xhigh implements; controller runs verify (exit code = ground truth).
+- Tester: cliproxy/claude-opus-4-8:high judges intent and catches cheats.
+- Up to 3 fix rounds, then escalate.
+

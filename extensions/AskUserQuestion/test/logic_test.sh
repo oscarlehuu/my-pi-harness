@@ -24,6 +24,7 @@ if [[ -n "${INVALID_BG_CALLS}" ]]; then
   echo "Allowed ThemeBg names: selectedBg, userMessageBg, customMessageBg, toolPendingBg, toolSuccessBg, toolErrorBg" >&2
   exit 1
 fi
+echo "AskUserQuestion theme.bg allowed-color guard passed"
 
 node --input-type=module <<'NODE'
 import assert from "node:assert/strict";
@@ -113,6 +114,22 @@ assert.deepEqual(logic.buildQuestionAnswer(multi, multiState), {
   selected: ["UI"],
   note: "UI first",
 }, "per-choice note can be cleared while whole-question note remains");
+
+assert.equal(
+  logic.decideOptionListEnterAction(0, 2),
+  "advance",
+  "Enter on the option list advances when the current question is not last",
+);
+assert.equal(
+  logic.decideOptionListEnterAction(1, 2),
+  "submit",
+  "Enter on the option list submits when the current question is last",
+);
+assert.equal(
+  logic.decideOptionListEnterAction(0, 1),
+  "submit",
+  "a single-question option list submits on Enter because it is already last",
+);
 
 let navigation = logic.createInitialNavigationState([single, multi]);
 assert.equal(navigation.currentQuestionIndex, 0, "navigation starts on first question");

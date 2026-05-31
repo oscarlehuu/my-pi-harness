@@ -17,6 +17,7 @@ import {
 	createInitialFocusState,
 	createInitialNavigationState,
 	cycleFocusMode,
+	decideOptionListEnterAction,
 	getChoiceNote,
 	hasSelection,
 	moveFocus,
@@ -111,8 +112,7 @@ class AskUserQuestionDialog extends Container implements Focusable {
 		this.done = done;
 		this.noteInput.onEscape = () => this.saveActiveNoteAndReturnToOptions();
 		this.noteInput.onSubmit = () => {
-			this.saveActiveNoteFromInput();
-			this.submitIfComplete();
+			this.cycleFocusedArea();
 		};
 		this.updateInputFocus();
 	}
@@ -144,8 +144,7 @@ class AskUserQuestionDialog extends Container implements Focusable {
 			}
 
 			if (matchesKey(data, Key.enter)) {
-				this.saveActiveNoteFromInput();
-				this.submitIfComplete();
+				this.cycleFocusedArea();
 				return;
 			}
 
@@ -194,7 +193,7 @@ class AskUserQuestionDialog extends Container implements Focusable {
 		}
 
 		if (matchesKey(data, Key.enter)) {
-			this.submitIfComplete();
+			this.handleOptionListEnter();
 		}
 	}
 
@@ -363,6 +362,16 @@ class AskUserQuestionDialog extends Container implements Focusable {
 		this.refresh();
 	}
 
+	private handleOptionListEnter(): void {
+		const action = decideOptionListEnterAction(this.navigation.currentQuestionIndex, this.questions.length);
+		if (action === "advance") {
+			this.switchQuestionTab(1);
+			return;
+		}
+
+		this.submitIfComplete();
+	}
+
 	private submitIfComplete(): void {
 		const missingIndex = this.navigation.states.findIndex((state) => !hasSelection(state));
 		if (missingIndex >= 0) {
@@ -379,7 +388,7 @@ class AskUserQuestionDialog extends Container implements Focusable {
 	private helpText(): string {
 		return this.theme.fg(
 			"dim",
-			"←/→ tabs • ↑/↓ options • Space select/toggle • Tab per-choice note → question note → options • Enter submit all • Esc note→options",
+			"←/→ tabs • ↑/↓ options • Space select/toggle • Tab per-choice note → question note → options • Enter next question (submit on last) • Esc note→options",
 		);
 	}
 

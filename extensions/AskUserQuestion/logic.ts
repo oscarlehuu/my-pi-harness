@@ -62,6 +62,12 @@ export interface AskUserQuestionStructuredResult {
 	answers: Record<string, AskUserQuestionAnswer>;
 }
 
+export type OptionListEnterAction = "advance" | "submit";
+
+export function decideOptionListEnterAction(currentQuestionIndex: number, totalQuestions: number): OptionListEnterAction {
+	return currentQuestionIndex < totalQuestions - 1 ? "advance" : "submit";
+}
+
 export function createInitialSelectionState(question: AskUserQuestionItem): SelectionState {
 	return {
 		focusedIndex: question.options.length > 0 ? 0 : -1,

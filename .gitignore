@@ -1,9 +1,5 @@
-# Machine-local runtime files — ~/.pi/agent is live; this repo only stores harness source.
-agent/auth.json
-agent/settings.json
-agent/sessions/
-agent/bin/
-agent/*-debug.log
+# Machine-local runtime (auth.json, settings.json, sessions/) lives only in ~/.pi/agent,
+# never in this repo. Nothing to ignore here for it.
 
 # OS / editor noise
 .DS_Store

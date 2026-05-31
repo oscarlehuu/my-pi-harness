@@ -14,23 +14,23 @@ their behalf and talks to the founder **only at decision points**. Build only wh
 | Role | Model | Tools | Does | Never |
 |------|-------|-------|------|-------|
 | **Founder** | — (human) | — | Sets intent, approves gates, makes taste calls | Writes code |
-| **CTO** | `cliproxy/claude-opus-4-8:xhigh` | orchestration + `loop`, `subagent` | Scopes, delegates, gates, synthesizes | Writes production code itself |
+| **CTO** | `cliproxy/claude-opus-4-8:xhigh` | orchestration + `foreman`, `subagent` | Scopes, delegates, gates, synthesizes | Writes production code itself |
 | **scout** | `cliproxy/gemini-3.5-flash-low:high` | read, grep, find, ls | Fast recon, returns compressed context | Edits anything |
 | **developer** | `openai-codex/gpt-5.5:xhigh` | full tools | Implements code + tests on disk | Judges its own work |
 | **tester** | `cliproxy/claude-opus-4-8:high` | read, grep, find, ls, bash | Judges intent, catches cheats | Edits code / fixes |
 
-Routing lives in `agent/models.json` (provider/model metadata) and each role's `model:` frontmatter
+Routing lives in `config/models.json` (provider/model metadata) and each role's `model:` frontmatter
 (`provider/id:thinking`). Valid thinking levels: `off|minimal|low|medium|high|xhigh` (`xhigh` = max).
 
 ## The loop
 
 `brainstorm → plan → [GATE 1] → implement → verify → test → (fix↺) → [GATE 2] → ship`
 
-Driven by the `loop` tool (`agent/extensions/loop/`). The CTO starts it; the machine runs it.
+Driven by the `foreman` tool (`extensions/foreman/`). The CTO starts it; the machine runs it.
 
 1. **Scope** with the founder if the task is unclear.
 2. **Scout** existing code when relevant (via `subagent`).
-3. `loop({ task, verifyCommand?, cwd?, maxRounds? })` — pauses at **Gate 1**.
+3. `foreman({ task, verifyCommand?, cwd?, maxRounds? })` — pauses at **Gate 1**.
 4. After Gate 1 approval: **developer** implements → **controller runs the verify command** (its
    exit code is ground truth) → **tester** judges whether the work satisfies intent and looks for
    cheats (hardcoding, edited tests). A non-zero exit is always `fail`; a zero exit is `success`
@@ -49,8 +49,8 @@ Driven by the `loop` tool (`agent/extensions/loop/`). The CTO starts it; the mac
 
 | Gate | When | Approve | Revise |
 |------|------|---------|--------|
-| **1 — Plan** | Before any code runs | `loop({ resume:true, approve:true })` → runs rounds | `loop({ resume:true, reject:"…" })` → halts |
-| **2 — Ship** | After verification passes | `loop({ resume:true, approve:true })` → done | `loop({ resume:true, reject:"…" })` → reopens for another round |
+| **1 — Plan** | Before any code runs | `foreman({ resume:true, approve:true })` → runs rounds | `foreman({ resume:true, reject:"…" })` → halts |
+| **2 — Ship** | After verification passes | `foreman({ resume:true, approve:true })` → done | `foreman({ resume:true, reject:"…" })` → reopens for another round |
 
 Gates are conversational and **persisted in the ledger**, so a killed/resumed session respects gate
 position. The CTO relays gate prompts to the founder and carries the decision back.

@@ -180,8 +180,8 @@ const LoopParams = {
 
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
-		name: "loop",
-		label: "Dev-Test-Fix Loop",
+		name: "foreman",
+		label: "Foreman (gated dev-test-fix orchestrator)",
 		description: [
 			"Run a DETERMINISTIC developer->tester->fix loop on a task, with two human gates, a hard",
 			"round cap, and an on-disk ledger (.pi/plans/<task>/) for resume. GATE 1 (plan): starting a",
@@ -189,7 +189,7 @@ export default function (pi: ExtensionAPI) {
 			"rounds then run (tester verdict success/partial/blocked/fail; on 'fail' the verdict is fed",
 			"back and retried until success or maxRounds). GATE 2 (ship): on success it pauses again for",
 			"the founder's approval before marking done. Approve a gate with { resume: true, approve: true }",
-			"or revise with { resume: true, reject: '<feedback>' }. Reuses the crew agents (developer, tester).",
+			"or revise with { resume: true, reject: '<feedback>' }. Drives the crew agents (developer, tester).",
 		].join(" "),
 		parameters: LoopParams as any,
 
@@ -256,8 +256,8 @@ export default function (pi: ExtensionAPI) {
 					appendLog(cwd, slug, { type: "gate1_awaiting" });
 					emit(
 						`\n=== GATE 1 / PLAN — approval needed ===\n${plan}\n` +
-							`Approve:  loop({ resume: true, approve: true })\n` +
-							`Revise:   loop({ resume: true, reject: "<what to change>" })`,
+							`Approve:  foreman({ resume: true, approve: true })\n` +
+							`Revise:   foreman({ resume: true, reject: "<what to change>" })`,
 					);
 					return done();
 				}
@@ -288,8 +288,8 @@ export default function (pi: ExtensionAPI) {
 				} else {
 					emit(
 						`\n=== GATE 2 / SHIP — approval needed ===\nTask "${state.task}" passed verification and is awaiting your sign-off.\n` +
-							`Approve:  loop({ resume: true, approve: true })\n` +
-							`Revise:   loop({ resume: true, reject: "<what to change>" })`,
+							`Approve:  foreman({ resume: true, approve: true })\n` +
+							`Revise:   foreman({ resume: true, reject: "<what to change>" })`,
 					);
 					return done();
 				}
@@ -388,8 +388,8 @@ export default function (pi: ExtensionAPI) {
 						`\n=== GATE 2 / SHIP — approval needed (round ${round}) ===\n` +
 							`Verification passed and the tester judged the work satisfies: ${state.task}\n` +
 							`Summary: ${testHandoff.summary}\n` +
-							`Approve:  loop({ resume: true, approve: true })\n` +
-							`Revise:   loop({ resume: true, reject: "<what to change>" })`,
+							`Approve:  foreman({ resume: true, approve: true })\n` +
+							`Revise:   foreman({ resume: true, reject: "<what to change>" })`,
 					);
 					return done();
 				}

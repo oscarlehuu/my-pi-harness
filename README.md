@@ -1,38 +1,52 @@
 # my-pi-harness
 
-A reusable harness for running many projects on **pi** (Pi Coding Agent). The "company" is the
-founder; this repo is the tooling. Built BY pi, FOR running pi. Philosophy: primitives, not features.
+A **workspace of pi extensions** — reusable primitives for **pi** (Pi Coding Agent), organized by
+domain. Not a single app; a growing collection of tools that each stand alone yet compose when
+installed together. Philosophy: primitives, not features.
 
-## How it runs
+## Layout
 
-`~/.pi/agent` is the live, machine-wide pi directory. This repo is the versioned source for the
-harness. `setup.sh` symlinks the committed harness files into `~/.pi/agent`, while secrets and
-sessions stay machine-local there.
+```
+extensions/
+  foreman/     orchestration domain — gated dev→test→fix loop + crew + CTO charter
+    index.ts        the `foreman` tool (orchestrator)
+    ledger.ts       on-disk task state (.pi/plans/<task>/)
+    crew/           developer.md  scout.md  tester.md   (role defs, not code)
+    AGENTS.md       CTO persona / project self-description
+    docs/           CHARTER.md  PHASE2-SPEC.md
+    test/           gate_flow_test.sh  (end-to-end acceptance)
+  subagent/    spawn primitive — runs an agent in an isolated pi subprocess
+  askuser/     (planned) interactive ask-the-user UI primitive
+config/
+  models.json  shared model routing (cliproxy + openai-codex)
+docs/
+  architecture.md  how pi loads; the install model
+install.sh     composes the workspace into ~/.pi/agent
+```
+
+Each extension registers one tool via `pi.registerTool`; pi auto-loads every `extensions/*/index.ts`
+(jiti, no build step). Add a domain = drop a new folder under `extensions/`.
+
+## Install
+
+`~/.pi/agent` is the live, machine-wide pi directory. This repo is the versioned source.
+`install.sh` symlinks each domain onto the flat names pi requires; secrets/sessions stay machine-local.
 
 ```bash
-./setup.sh               # one-time / update: installs symlinks into ~/.pi/agent
-pi                       # no PI_CODING_AGENT_DIR export needed
+./install.sh             # symlink workspace into ~/.pi/agent (idempotent)
+pi                       # from any project — no PI_CODING_AGENT_DIR needed
 ```
 
-Do **not** set `PI_CODING_AGENT_DIR` for normal use. That env var replaces `~/.pi/agent`; we only use
-it for temporary experiments.
+Do **not** set `PI_CODING_AGENT_DIR` for normal use; it replaces `~/.pi/agent` wholesale.
 
-## Architecture: core vs workflows
+## The foreman loop
 
-```
-agent/                         ← source for what setup.sh installs into ~/.pi/agent
-  AGENTS.md                    CTO persona (governance)
-  models.json                  model routing (cliproxy + codex, :thinking inline)
-  agents/                      CORE CREW — shared by every workflow, defined ONCE
-    scout.md  developer.md  tester.md
-  extensions/                  pi auto-loads every */index.ts (jiti, no build step)
-    subagent/                  CORE PRIMITIVE — spawns isolated agents
-    loop/                      WORKFLOW 1 — deterministic dev→test→fix + ledger + gates
-```
+`brainstorm → plan → [GATE 1] → implement → verify → test → (fix↺) → [GATE 2] → ship`
 
-- **Core** (crew + subagent) exists once.
-- Each **workflow** is a folder in `extensions/`; it reuses the same crew + subagent. No duplication.
-- Add a workflow = drop a new folder in `extensions/`. pi finds it automatically.
+The CTO (main pi session) starts `foreman({ task, verifyCommand? })`; the machine runs the rest:
+controller runs the verify command (exit code = ground truth), tester judges intent + catches cheats,
+fails are retried up to a cap. Two human gates (plan, ship) pause for founder approval. Full manual:
+`extensions/foreman/docs/CHARTER.md`.
 
 ## Roles & routing
 
@@ -43,15 +57,11 @@ agent/                         ← source for what setup.sh installs into ~/.pi/
 | developer | openai-codex/gpt-5.5:xhigh | implements, full tools |
 | tester | cliproxy/claude-opus-4-8:high | judges verification, read-only |
 
-pi's valid thinking levels are `off|minimal|low|medium|high|xhigh`; we use `xhigh` as "max".
+Thinking levels: `off|minimal|low|medium|high|xhigh` (`xhigh` = max). cliproxy agents use an
+**append-only** system prompt (preserves the Claude Code marker → Max subscription quota, not credits).
 
-cliproxy agents use **append-only** system prompt (preserves Claude Code marker → Max subscription quota, not credits).
+## Test
 
-## Docs
-
-- `docs/PHASE2-SPEC.md` — the loop workflow spec
-- `docs/CHARTER.md` — roles, loop, gates, definition-of-done (Phase 3)
-
-## Tests
-
-- `test/loop/` — broken-task handshake (dev→test→fix acceptance rig)
+```bash
+bash extensions/foreman/test/gate_flow_test.sh   # full gate-flow acceptance, exit 0 = pass
+```

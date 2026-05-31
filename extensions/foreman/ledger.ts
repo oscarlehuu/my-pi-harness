@@ -68,11 +68,14 @@ function ensureGitignore(workingDir: string): void {
 			giPath,
 			[
 				"# Only the ledger travels with the code; everything else in .pi is machine-local.",
+				"# Ignore everything, then re-include plans/ and recurse into its contents.",
 				"*",
 				"!.gitignore",
 				"!plans/",
+				"!plans/**",
+				"# ...but keep machine-local noise out of the committed ledger.",
 				"plans/*/transcripts/",
-				"plans/*/**/*.log",
+				"plans/**/*.log",
 				"",
 			].join("\n"),
 		);

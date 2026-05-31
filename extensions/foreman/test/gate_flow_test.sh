@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-LOOP_EXT="$ROOT_DIR/agent/extensions/loop/index.ts"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
+LOOP_EXT="$ROOT_DIR/extensions/foreman/index.ts"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pi-loop-gate-flow.XXXXXX")"
 REPO="$TMP_ROOT/repo"
 LOG_DIR="$TMP_ROOT/logs"
@@ -54,7 +54,7 @@ mkdir -p "$REPO" "$LOG_DIR"
 
 cat >"$LOG_DIR/driver-system-prompt.txt" <<'PROMPT'
 You are a deterministic CLI tool bridge for an acceptance test.
-When the user gives JSON arguments for the `loop` tool, call `loop` exactly once with exactly those arguments.
+When the user gives JSON arguments for the `foreman` tool, call `foreman` exactly once with exactly those arguments.
 Do not call any other tool. Do not change files yourself. After the tool returns, respond with one short line.
 PROMPT
 DRIVER_SYSTEM_PROMPT="$(cat "$LOG_DIR/driver-system-prompt.txt")"
@@ -253,13 +253,13 @@ run_pi_sync() {
     cd "$REPO"
     PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 \
       pi --mode json --print --no-session --no-context-files --no-builtin-tools --no-extensions \
-        --extension "$LOOP_EXT" --tools loop --system-prompt "$DRIVER_SYSTEM_PROMPT" \
+        --extension "$LOOP_EXT" --tools foreman --system-prompt "$DRIVER_SYSTEM_PROMPT" \
         ${pi_args[@]+"${pi_args[@]}"} "$prompt"
   ) >"$out" 2>"$err" || {
     tail -80 "$err" >&2 || true
     fail "pi command failed for $name (see $out / $err)"
   }
-  grep -q '"toolName":"loop"' "$out" || fail "pi command $name did not execute loop tool (see $out)"
+  grep -q '"toolName":"foreman"' "$out" || fail "pi command $name did not execute foreman tool (see $out)"
 }
 
 start_pi_async() {
@@ -272,14 +272,14 @@ start_pi_async() {
     cd "$REPO"
     PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 \
       pi --mode json --print --no-session --no-context-files --no-builtin-tools --no-extensions \
-        --extension "$LOOP_EXT" --tools loop --system-prompt "$DRIVER_SYSTEM_PROMPT" \
+        --extension "$LOOP_EXT" --tools foreman --system-prompt "$DRIVER_SYSTEM_PROMPT" \
         ${pi_args[@]+"${pi_args[@]}"} "$prompt"
   ) >"$out" 2>"$err" &
   PI_BG_PID=$!
 }
 
 start_prompt=$(cat <<EOF
-Call the loop tool exactly once with these JSON arguments:
+Call the foreman tool exactly once with these JSON arguments:
 {
   "task": "$TASK",
   "verifyCommand": "$VERIFY_COMMAND",
@@ -290,7 +290,7 @@ EOF
 )
 
 approve_prompt=$(cat <<EOF
-Call the loop tool exactly once with these JSON arguments:
+Call the foreman tool exactly once with these JSON arguments:
 {
   "resume": true,
   "approve": true,
@@ -316,7 +316,7 @@ if ! wait "$PI_BG_PID"; then
   fail "pi command failed for gate1_approve"
 fi
 PI_BG_PID=""
-grep -q '"toolName":"loop"' "$LOG_DIR/gate1_approve.jsonl" || fail "pi command gate1_approve did not execute loop tool"
+grep -q '"toolName":"foreman"' "$LOG_DIR/gate1_approve.jsonl" || fail "pi command gate1_approve did not execute foreman tool"
 assert_state awaiting_ship
 assert_json_state_fields awaiting_ship true false
 assert_log_event gate1_approved

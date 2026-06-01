@@ -8,6 +8,8 @@ REPO="$TMP_ROOT/repo"
 LOG_DIR="$TMP_ROOT/logs"
 STATE_FILE=""
 PLAN_DIR=""
+SLUG=""
+MIRROR_REPO_DIR=""
 PI_BG_PID=""
 
 fail() {
@@ -20,6 +22,10 @@ cleanup() {
   if [[ -n "${PI_BG_PID:-}" ]] && kill -0 "$PI_BG_PID" >/dev/null 2>&1; then
     kill "$PI_BG_PID" >/dev/null 2>&1 || true
     wait "$PI_BG_PID" >/dev/null 2>&1 || true
+  fi
+  # Foreman mirrors this temp repo's ledger out-of-tree under the agent dir; remove that litter.
+  if [[ -n "${MIRROR_REPO_DIR:-}" && -d "$MIRROR_REPO_DIR" ]]; then
+    rm -rf "$MIRROR_REPO_DIR" || true
   fi
   if [[ $status -eq 0 ]]; then
     rm -rf "$TMP_ROOT"
@@ -273,6 +279,50 @@ if not seen_start:
 PY
 }
 
+# Foreman mirrors the committable ledger to <agentDir>/foreman/ledger-mirror/<repoKey>/plans/<slug>/.
+# That out-of-tree copy is what makes a task survive `git clean`/reset/crash inside the repo.
+assert_durable_mirror() {
+  local mirror_root="$AGENT_DIR/foreman/ledger-mirror"
+  [[ -d "$mirror_root" ]] || fail "durable mirror root missing: $mirror_root"
+  # repoKey = sanitized-tail + '-' + 8-hex sha256(absolute repo path); match by our slug under it.
+  local mirror_state
+  mirror_state="$(find "$mirror_root" -type f -path "*/plans/$SLUG/state.json" 2>/dev/null | head -1)"
+  [[ -n "$mirror_state" ]] || fail "no mirrored state.json for slug '$SLUG' under $mirror_root"
+  MIRROR_REPO_DIR="${mirror_state%/plans/*}"
+  local mstate
+  mstate="$(json_field "$mirror_state" state)"
+  [[ "$mstate" == "done" ]] || fail "mirrored state should be 'done', got '$mstate'"
+  [[ -f "${mirror_state%/state.json}/log.jsonl" ]] || fail "mirror missing log.jsonl"
+  find "${mirror_state%/state.json}/handoffs" -type f -name '*.json' | grep -q . || fail "mirror missing handoffs"
+
+  # The decisive property: wipe the in-repo ledger (as a crash/clean would), then restoreFromMirror
+  # must rebuild it from the out-of-tree copy. (This task ends 'done' so it won't be "resumable",
+  # but the files must come back intact — a planning/in_progress task, like the lost pimote one,
+  # would additionally resolve via resume.) Asserted at the data layer, headlessly.
+  rm -rf "$REPO/.pi/plans/$SLUG"
+  PI_CODING_AGENT_DIR="$AGENT_DIR" node --input-type=module - "$REPO" "$SLUG" "$LOOP_EXT" <<'NODE' || fail "mirror did not restore a wiped ledger"
+import * as path from "node:path";
+import * as fs from "node:fs";
+import { pathToFileURL } from "node:url";
+const [repo, slug, loopExt] = process.argv.slice(2);
+const ledgerUrl = pathToFileURL(path.join(path.dirname(loopExt), "ledger.ts")).href;
+const led = await import(ledgerUrl);
+led.configureMirror(path.join(process.env.PI_CODING_AGENT_DIR, "foreman", "ledger-mirror"));
+if (fs.existsSync(path.join(repo, ".pi/plans", slug))) throw new Error("precondition: ledger should be wiped");
+led.restoreFromMirror(repo);
+const statePath = path.join(repo, ".pi/plans", slug, "state.json");
+if (!fs.existsSync(statePath)) throw new Error("restore did not recreate state.json from mirror");
+if (!fs.existsSync(path.join(repo, ".pi/plans", slug, "log.jsonl"))) throw new Error("restore missing log.jsonl");
+const restoredState = JSON.parse(fs.readFileSync(statePath, "utf8")).state;
+if (restoredState !== "done") throw new Error("restored state wrong: " + restoredState);
+// And a non-done task in the same restored repo must be resume-resolvable.
+led.initLedger(repo, "durability resume probe planning", 3, undefined, "probe-session");
+const r = led.resolveResumable(repo, { sessionId: "probe-session" });
+if (!r.state || r.state.state === "done") throw new Error("resume could not resolve a restored non-done task: " + JSON.stringify(r));
+console.log("restored ok");
+NODE
+}
+
 pi_args=()
 if [[ -n "${PI_GATE_FLOW_DRIVER_MODEL:-}" ]]; then
   pi_args+=(--model "$PI_GATE_FLOW_DRIVER_MODEL")
@@ -338,6 +388,7 @@ EOF
 run_pi_sync gate1_start "$start_prompt"
 STATE_FILE="$(find_state_file)"
 PLAN_DIR="$(dirname "$STATE_FILE")"
+SLUG="$(basename "$PLAN_DIR")"
 assert_state planning
 assert_json_state_fields planning false false
 assert_log_event gate1_awaiting
@@ -368,6 +419,9 @@ assert_state done
 assert_json_state_fields done true true
 assert_log_event gate2_approved
 assert_log_event task_done
+
+# Durability: foreman must mirror the committable ledger OUT OF TREE (survives git clean/reset/crash).
+assert_durable_mirror
 
 # The finished temp repo must pass its pytest command.
 (cd "$REPO" && $VERIFY_COMMAND) >"$LOG_DIR/final-pytest.out" 2>"$LOG_DIR/final-pytest.err" || {

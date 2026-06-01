@@ -22,10 +22,12 @@ import {
 	type LedgerState,
 	type SuccessState,
 	appendLog,
+	configureMirror,
 	initLedger,
 	resolveResumable,
 	listHandoffs,
 	readState,
+	restoreFromMirror,
 	taskDir,
 	transcriptsDir,
 	writeActivity,
@@ -34,6 +36,13 @@ import {
 } from "./ledger.ts";
 import { ForemanDashboard } from "./dashboard/view.ts";
 import { buildStatuslineModel, formatStatusline } from "./dashboard/reader.ts";
+
+// Durable out-of-tree ledger mirror: survives `git clean`/reset/crash inside any target repo.
+// Resolve the location from pi's agent dir and publish it via env so the ledger module finds it even
+// if the loader instantiates that module separately (jiti moduleCache:false).
+if (!process.env.FOREMAN_LEDGER_MIRROR && process.env.FOREMAN_DISABLE_MIRROR !== "1") {
+	configureMirror(path.join(getAgentDir(), "foreman", "ledger-mirror"));
+}
 
 const STATUS_KEY = "foreman";
 
@@ -414,6 +423,7 @@ export default function (pi: ExtensionAPI) {
 
 			let state: LedgerState;
 			if (params.resume) {
+				restoreFromMirror(cwd); // self-heal a ledger wiped by git clean/reset/crash before resolving
 				const resolved = resolveResumable(cwd, { slug: params.slug, sessionId });
 				if (!resolved.state) {
 					return { content: [{ type: "text", text: resolved.error ?? "No resumable task found in this repo." }] };

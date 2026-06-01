@@ -2,10 +2,17 @@
  * Ledger — on-disk task state for the loop workflow.
  * Lives in the TARGET repo at <repo>/.pi/plans/<task-slug>/ (committed to git).
  * Resume = read state.json + handoffs/ (cursor-based).
+ *
+ * Durability: the in-repo ledger can be wiped by `git clean`, a reset, or a crashed tree rebuild.
+ * To make a lost task impossible, Foreman also mirrors the committable files to an OUT-OF-TREE
+ * store under the pi agent dir (configured by index.ts via `configureMirror`). Resume auto-restores
+ * from the mirror when the in-repo ledger is missing. No pi imports here, so the mirror root is
+ * injected rather than resolved — keeps this module headlessly unit-testable.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 
 export type SuccessState = "success" | "partial" | "blocked" | "fail";
 export type ActivityPhase = "developer" | "verify" | "tester" | "idle";
@@ -64,6 +71,90 @@ export function slugify(s: string): string {
 
 export function plansRoot(workingDir: string): string {
 	return path.join(workingDir, ".pi", "plans");
+}
+
+// ---- Out-of-tree durable mirror ----
+// The mirror root must be resolvable from any module instance. pi's loader (jiti, moduleCache:false)
+// can instantiate this module more than once, so we DON'T keep it in a module-level variable that a
+// separate `configureMirror` call would set — we resolve it deterministically from the environment
+// every time. index.ts exports the agent dir into FOREMAN_LEDGER_MIRROR at load; we also fall back to
+// the standard pi agent dir so durability holds even if that export is missing.
+
+function resolveMirrorRoot(): string | null {
+	const explicit = process.env.FOREMAN_LEDGER_MIRROR;
+	if (explicit && explicit.trim()) return explicit;
+	if (process.env.FOREMAN_DISABLE_MIRROR === "1") return null;
+	const agentDir = process.env.PI_CODING_AGENT_DIR;
+	const home = process.env.HOME || process.env.USERPROFILE;
+	const base = agentDir && agentDir.trim() ? agentDir : home ? path.join(home, ".pi", "agent") : null;
+	return base ? path.join(base, "foreman", "ledger-mirror") : null;
+}
+
+/**
+ * Override the durable mirror location (mainly for tests). Sets the env the ledger resolves from, so
+ * it survives this module being re-instantiated by the loader. Pass null to disable mirroring.
+ */
+export function configureMirror(root: string | null): void {
+	if (root === null) {
+		process.env.FOREMAN_DISABLE_MIRROR = "1";
+		delete process.env.FOREMAN_LEDGER_MIRROR;
+	} else {
+		process.env.FOREMAN_LEDGER_MIRROR = root;
+		delete process.env.FOREMAN_DISABLE_MIRROR;
+	}
+}
+
+/** Stable, collision-free folder name for a repo path (sanitized tail + short hash of the full path). */
+function repoKey(workingDir: string): string {
+	const abs = path.resolve(workingDir);
+	const tail = abs.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(-40);
+	const hash = createHash("sha256").update(abs).digest("hex").slice(0, 8);
+	return `${tail}-${hash}`;
+}
+
+function mirrorPlansRoot(workingDir: string): string | null {
+	const root = resolveMirrorRoot();
+	return root ? path.join(root, repoKey(workingDir), "plans") : null;
+}
+
+/** Best-effort copy of a task's committable files (state.json, plan.md, log.jsonl, handoffs/) to the mirror. */
+function syncToMirror(workingDir: string, slug: string): void {
+	const root = mirrorPlansRoot(workingDir);
+	if (!root) return;
+	try {
+		const src = taskDir(workingDir, slug);
+		const dest = path.join(root, slug);
+		fs.mkdirSync(dest, { recursive: true });
+		for (const f of ["state.json", "plan.md", "log.jsonl"]) {
+			const s = path.join(src, f);
+			if (fs.existsSync(s)) fs.copyFileSync(s, path.join(dest, f));
+		}
+		const handoffs = path.join(src, "handoffs");
+		if (fs.existsSync(handoffs)) fs.cpSync(handoffs, path.join(dest, "handoffs"), { recursive: true });
+	} catch {
+		// Durability is best-effort; never let mirroring crash the loop.
+	}
+}
+
+/**
+ * Restore any mirrored task whose in-repo ledger is missing (wiped by clean/reset/crash).
+ * Call before scanning for resumable tasks so a lost ledger self-heals.
+ */
+export function restoreFromMirror(workingDir: string): void {
+	const root = mirrorPlansRoot(workingDir);
+	if (!root || !fs.existsSync(root)) return;
+	try {
+		for (const slug of fs.readdirSync(root)) {
+			const mirroredState = path.join(root, slug, "state.json");
+			const repoState = path.join(taskDir(workingDir, slug), "state.json");
+			if (fs.existsSync(mirroredState) && !fs.existsSync(repoState)) {
+				ensureGitignore(workingDir);
+				fs.cpSync(path.join(root, slug), taskDir(workingDir, slug), { recursive: true });
+			}
+		}
+	} catch {
+		// best-effort
+	}
 }
 
 export function taskDir(workingDir: string, slug: string): string {
@@ -157,11 +248,13 @@ export function readState(workingDir: string, slug: string): LedgerState {
 export function writeState(workingDir: string, state: LedgerState): void {
 	state.updatedAt = nowIso();
 	atomicWriteJson(path.join(taskDir(workingDir, state.slug), "state.json"), state);
+	syncToMirror(workingDir, state.slug);
 }
 
 export function appendLog(workingDir: string, slug: string, entry: Record<string, unknown>): void {
 	const p = path.join(taskDir(workingDir, slug), "log.jsonl");
 	fs.appendFileSync(p, `${JSON.stringify({ timestamp: nowIso(), ...entry })}\n`);
+	syncToMirror(workingDir, slug);
 }
 
 export function writeActivity(workingDir: string, slug: string, activity: Activity): void {

@@ -75,6 +75,13 @@ committed; a generated `.pi/.gitignore` excludes the rest). Contents:
   writes one, even on parse failure).
 - `log.jsonl` — append-only event trail (gates, rounds, verdicts).
 
+**Durability (automatic, every repo).** The in-repo ledger can be destroyed by `git clean`, a reset,
+or a crashed tree rebuild before you commit. So Foreman also mirrors the committable files
+(`state.json`, `plan.md`, `log.jsonl`, `handoffs/`) out of tree to
+`<agentDir>/foreman/ledger-mirror/<repoKey>/plans/<slug>/` on every state change. On `resume`,
+Foreman first restores any task whose in-repo ledger is missing from that mirror, so a wiped task
+self-heals instead of vanishing. This is Foreman's job — no per-repo `.gitignore` or setup needed.
+
 ## When the CTO talks to the founder (only here)
 - Gate 1 (plan) and Gate 2 (ship).
 - Genuine forks where founder taste/priority matters.

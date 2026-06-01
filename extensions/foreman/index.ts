@@ -60,6 +60,7 @@ import {
 	validatePlannerPlan,
 } from "./planner.ts";
 import { decideReviewOutcome, parseReviewVerdict, type ReviewVerdict } from "./reviewer.ts";
+import { evaluateDoneness, extractDonenessInputs, renderDoneChecklist } from "./done.ts";
 import { buildCommitMessage, decideShipCommit, resolveStagePaths } from "./ship.ts";
 
 // Stronger model the frontend track falls back to when Gemini fails to drive the tools.
@@ -793,6 +794,32 @@ function readShipHandoffContext(cwd: string, slug: string): ShipHandoffContext {
 	};
 }
 
+function isLogEvent(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readLedgerLogEvents(cwd: string, slug: string): Array<Record<string, unknown>> {
+	try {
+		const logPath = path.join(taskDir(cwd, slug), "log.jsonl");
+		if (!fs.existsSync(logPath)) return [];
+		return fs
+			.readFileSync(logPath, "utf-8")
+			.split(/\r?\n/)
+			.map((line) => line.trim())
+			.filter(Boolean)
+			.map((line) => {
+				try {
+					return JSON.parse(line);
+				} catch {
+					return null;
+				}
+			})
+			.filter(isLogEvent);
+	} catch {
+		return [];
+	}
+}
+
 async function runReleaseCommitGate(input: {
 	cwd: string;
 	slug: string;
@@ -1039,6 +1066,15 @@ export default function (pi: ExtensionAPI) {
 			};
 			refreshGates();
 
+			const evaluateCurrentDoneness = (gate2Approved: boolean) =>
+				evaluateDoneness(
+					extractDonenessInputs(readLedgerLogEvents(cwd, slug), {
+						gate1Approved: state.gate1Approved,
+						gate2Approved,
+						reviewerGateDeclared: gatesForStage(gates, "pre-ship").some((gate) => gate.kind === "judge"),
+					}),
+				);
+
 			// Push this session's foreman tasks to the footer statusline (newest-first, with the live
 			// crew agent). No-op when there's no interactive UI (headless/print/RPC).
 			let statusFrame = 0;
@@ -1175,21 +1211,39 @@ export default function (pi: ExtensionAPI) {
 						`The work passed verification but the founder asked for changes:\n${params.reject}\n\nApply these.`;
 					// fall through into the round loop
 				} else if (params.approve) {
+					const doneness = evaluateCurrentDoneness(true);
+					const doneChecklist = renderDoneChecklist(doneness);
+					if (!doneness.done) {
+						state.state = "awaiting_ship";
+						writeState(cwd, state);
+						appendLog(cwd, slug, { type: "done_blocked", blockers: doneness.blockers });
+						emit(
+							`\n=== GATE 2 / SHIP — Definition of Done blocked ===\n${doneChecklist}\n\n` +
+								`Commit withheld. The task remains at Gate 2; it was NOT marked done.\n` +
+								`Resolve the blockers, then approve again. To send it back, run: foreman({ resume: true, reject: "<what to change>" })\n` +
+								`If the only blocker is an inconclusive reviewer verdict, reopen with reject feedback asking for a live reviewer rerun; strict mode has no force-ship bypass and requires REVIEW: APPROVE before commit.`,
+						);
+						return done();
+					}
+
 					state.gate2Approved = true;
 					state.state = "done";
 					writeState(cwd, state);
 					appendLog(cwd, slug, { type: "gate2_approved" });
+					appendLog(cwd, slug, { type: "done_evaluated", done: true, blockers: [] });
 					appendLog(cwd, slug, { type: "task_done", round: state.round });
 					const releaseActionGates = gatesForStage(gates, "release").filter((gate) => gate.kind === "action");
 					const releaseResults = releaseActionGates.length
 						? await runReleaseActionGates({ cwd, slug, state, track, gates: releaseActionGates, signal })
 						: [];
 					const releaseSummary = releaseResults.length ? `\nRelease actions:\n${releaseResults.join("\n")}` : "";
-					emit(`SHIPPED. Task done. Ledger: ${path.relative(cwd, taskDir(cwd, slug))}${releaseSummary}`);
+					emit(`SHIPPED. Task done. Ledger: ${path.relative(cwd, taskDir(cwd, slug))}\n\n${doneChecklist}${releaseSummary}`);
 					return done();
 				} else {
+					const doneChecklist = renderDoneChecklist(evaluateCurrentDoneness(false));
 					emit(
 						`\n=== GATE 2 / SHIP — approval needed ===\nTask "${state.task}" passed verification and is awaiting your sign-off.\n` +
+							`${doneChecklist}\n` +
 							`Approve:  foreman({ resume: true, approve: true })\n` +
 							`Revise:   foreman({ resume: true, reject: "<what to change>" })`,
 					);
@@ -1571,11 +1625,13 @@ export default function (pi: ExtensionAPI) {
 					writeState(cwd, state);
 					appendLog(cwd, slug, { type: "gate2_awaiting", round, preShipSummary: preShipSummaryLines.length ? preShipSummaryLines : undefined });
 					const preShipSummary = preShipSummaryLines.length ? `Pre-ship checks:\n${preShipSummaryLines.join("\n")}\n` : "";
+					const doneChecklist = renderDoneChecklist(evaluateCurrentDoneness(false));
 					emit(
 						`\n=== GATE 2 / SHIP — approval needed (round ${round}) ===\n` +
 							`Verification passed and the tester judged the work satisfies: ${state.task}\n` +
 							`Summary: ${testHandoff.summary}\n` +
 							preShipSummary +
+							`${doneChecklist}\n` +
 							`Approve:  foreman({ resume: true, approve: true })\n` +
 							`Revise:   foreman({ resume: true, reject: "<what to change>" })`,
 					);

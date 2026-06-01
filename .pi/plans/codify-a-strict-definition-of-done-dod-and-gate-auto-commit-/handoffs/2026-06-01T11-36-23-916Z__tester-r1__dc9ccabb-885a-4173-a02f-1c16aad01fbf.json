@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-01T11:36:23.916Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "dc9ccabb-885a-4173-a02f-1c16aad01fbf",
+  "successState": "success",
+  "summary": "I'll investigate the actual changes made to judge whether the task is satisfied.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll investigate the actual changes made to judge whether the task is satisfied.\ndone.ts looks complete and correct. Now let me check the index.ts wiring and config files.\nThe wiring looks good. Let me check the `evaluateCurrentDoneness` helper and `readLedgerLogEvents`.\nAll config changes are in place. Let me verify the gitignore check and run the test.\nAll checks pass. Let me run the full existing suite to confirm no regressions.\nAll suites pass. Let me confirm done.ts purity (no pi imports) and that the blocked path withholds commit.\nEverything checks out. Verification complete.\n\n**Findings:**\n- `done.ts` (extensions/foreman/done.ts:1) — pure module, zero imports, correct interfaces (`DoneCheck`, `DonenessResult`), strict `evaluateDoneness` matching all rules (gate1, per-round n/a-vs-fail, tester=success, pre-ship n/a, reviewer strict approve/unknown→warn+blocker/request-changes, gate2), `renderDoneChecklist` with ✓/✗/⚠/– icons + blocker list, and pure `extractDonenessInputs` scanning for LAST relevant events.\n- index.ts:1214 — Gate 2 approve path computes doneness before committing; `done=false` → state stays `awaiting_ship`, logs `done_blocked`, emits actionable message, **commit withheld**; `done=true` → sets done, logs `done_evaluated`+`task_done`, runs release action gates, appends checklist to SHIPPED emit. Backward compat preserved (gate_flow_test passes).\n- `.pi/foreman.json` — keeps verify gate, adds `review` judge (pre-ship) + `commit` action (release) gates.\n- `.pi/.gitignore` — `!foreman.json` added; `git check-ignore` returns empty (exit 1).\n- `done_test.sh` — full strict truth table, render, extract-last-event, and config/gitignore assertions. All 10 suites pass, no regressions.\n\nNo cheats: no hardcoding, no test-gaming, ledger schema untouched, constrained files unmodified.\n\nVERDICT: PASS"
+}

@@ -1,0 +1,47 @@
+{
+  "summary": "Codify a strict Definition of Done as a pure headless module (extensions/foreman/done.ts) and gate the Phase-D Gate-2 auto-commit on it: at the awaiting_ship approve branch (index.ts:1177-1189), parse the task's log.jsonl, derive DoD inputs, and only set done/run the release commit action when evaluateDoneness().done===true; a reviewer-UNKNOWN (or any unmet hard check) withholds the commit, keeps state at awaiting_ship, logs done_blocked, and surfaces an actionable checklist. Add done_test.sh and activate the full pipeline in this repo by un-ignoring and extending .pi/foreman.json with a pre-ship review judge gate and a release commit action gate.",
+  "steps": [
+    "Recon (read-only, done): confirmed done.ts absent, foreman.json currently git-ignored (git check-ignore returns it, exit 0), Gate-2 approve branch at index.ts:1177-1189 runs release action gates unconditionally, and log event shapes: verdict.successState, verify_ran(exitCode), pre_ship_command_gates_ran.passed, pre_ship_reviewer_verdict.decision.",
+    "Create pure extensions/foreman/done.ts (node-builtins only, no pi imports): DoneCheck/DonenessResult interfaces; evaluateDoneness(input) implementing STRICT rules (gate1Approved true; latestTesterState must be 'success'; perRound/preShip command gates: defined=>must be true else blocker, undefined=>'n/a'; reviewer: declared+approve=>pass, declared+request-changes=>blocker, declared+unknown/undefined=>warn+blocker 'reviewer verdict inconclusive — strict DoD requires a clean APPROVE', not-declared=>'n/a'; gate2Approved true); checklist ordered plan/per-round/tester/pre-ship/review/founder; done=blockers.length===0; renderDoneChecklist(result) compact multi-line block with ✓/✗/⚠/– + blockers; extractDonenessInputs(events[],opts) scanning for the LAST verdict.successState, verify_ran.exitCode (->passed===0), pre_ship_command_gates_ran.passed, pre_ship_reviewer_verdict.decision.",
+    "Wire into index.ts awaiting_ship approve branch (surgical): read+parse log.jsonl lines into an array (controller-side I/O), compute reviewerGateDeclared via gatesForStage(gates,'pre-ship').some(g=>g.kind==='judge'), call extractDonenessInputs+evaluateDoneness with gate2Approved:true. If done: keep today's path (state='done', gate2_approved+task_done logs, run release action gates) and add done_evaluated{done:true,blockers:[]} log + renderDoneChecklist on the SHIPPED emit. If not done: set state back to 'awaiting_ship', log done_blocked{blockers}, emit checklist+blockers+instruction (reject-with-feedback OR reopen to re-run the live reviewer; no silent force), and DO NOT run release/commit.",
+    "Update .pi/.gitignore: add '!foreman.json' after the '*' ignore (alongside the existing !plans/ re-includes); verify git check-ignore .pi/foreman.json returns nothing.",
+    "Update .pi/foreman.json: keep the per-round 'verify' command gate; add {name:'review',kind:'judge',stage:'pre-ship',agent:'reviewer'} and {name:'commit',kind:'action',stage:'release',action:'commit'}, preserving exact key spacing so the grep asserts ('\"agent\": \"reviewer\"', '\"action\": \"commit\"') match.",
+    "Create extensions/foreman/test/done_test.sh (ship_test.sh/reviewer_test.sh style, ROOT_DIR + node --input-type=module importing done.ts): strict truth table (all-pass+approve=>done; declared+unknown=>done false w/ inconclusive blocker; declared+request-changes=>false; no-reviewer-gate+tester success+gate1+gate2=>done true; tester partial/blocked/fail=>false; gate1 false=>false; preShip passed=false=>false, undefined=>n/a; gate2 false=>false), renderDoneChecklist line-per-check + blockers, extractDonenessInputs LAST-event selection, plus shell asserts that foreman.json declares review+commit gates and git check-ignore .pi/foreman.json is empty.",
+    "Run the full legacy verify command (done_test + gitignore/grep asserts + ship/gates/reviewer/planner_timeout/planner/guard/fallback/ledger/dashboard reader suites) and gate_flow_test.sh to confirm no regression and backward-compat (no-reviewer-gate temp repo => review n/a => done true)."
+  ],
+  "filesLikely": [
+    "extensions/foreman/done.ts",
+    "extensions/foreman/index.ts",
+    "extensions/foreman/test/done_test.sh",
+    "/Users/a1241968/Desktop/Oscar/my-pi-harness/.pi/.gitignore",
+    "/Users/a1241968/Desktop/Oscar/my-pi-harness/.pi/foreman.json"
+  ],
+  "risks": [
+    "The existing per-round 'verify' gate command does NOT currently run done_test.sh or ship_test.sh; if left verbatim the per-round gate won't catch done.ts regressions. Proposing to extend the verify command to append done_test.sh + ship_test.sh + the foreman.json/check-ignore assertions (the task says 'keep' the gate, which I read as keep+extend, not replace). Flagging as a judgment call.",
+    "Gate-2 wiring requires NEW controller-side log.jsonl reading/parsing at index.ts:1177-1189; must guard per-line JSON.parse against malformed lines and keep done.ts pure (parsing array passed in). Risk of touching more of index.ts than intended — will keep it surgical to the approve branch.",
+    "Activating the commit action gate in THIS repo means future real Gate-2 approvals will auto-commit; correctness of the done=true gate is load-bearing. Strict mode must WITHHOLD commit on reviewer-unknown with no force path.",
+    "gate_flow_test.sh and other suites must still pass: a repo with no reviewer/command gates + tester success + gate1 + founder approval must yield done=true (review n/a) so behavior is identical to today.",
+    "foreman.json key spacing must exactly match the grep asserts ('\"agent\": \"reviewer\"', '\"action\": \"commit\"'); a formatter could collapse spacing and break the test/verify.",
+    "Un-ignoring foreman.json changes git tracking; verify with git check-ignore (currently returns the path, exit 0 — must become empty)."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "bash extensions/foreman/test/done_test.sh && test -z \"$(git -C . check-ignore .pi/foreman.json)\" && grep -q '\"agent\": \"reviewer\"' .pi/foreman.json && grep -q '\"action\": \"commit\"' .pi/foreman.json && bash extensions/foreman/test/ship_test.sh && grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ]
+}

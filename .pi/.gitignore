@@ -1,7 +1,8 @@
-# Only the ledger travels with the code; everything else in .pi is machine-local.
-# Ignore everything, then re-include plans/ and recurse into its contents.
+# Only the gate config and ledger travel with the code; everything else in .pi is machine-local.
+# Ignore everything, then re-include foreman.json, plans/, and recurse into plans contents.
 *
 !.gitignore
+!foreman.json
 !plans/
 !plans/**
 # ...but keep machine-local noise out of the committed ledger.

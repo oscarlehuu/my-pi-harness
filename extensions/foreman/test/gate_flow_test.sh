@@ -50,6 +50,7 @@ require_cmd() {
 
 require_cmd pi
 require_cmd git
+require_cmd node
 require_cmd python3
 require_file "$LOOP_EXT"
 AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
@@ -58,12 +59,72 @@ require_file "$AGENT_DIR/agents/tester.md"
 
 mkdir -p "$REPO" "$LOG_DIR"
 
-cat >"$LOG_DIR/driver-system-prompt.txt" <<'PROMPT'
-You are a deterministic CLI tool bridge for an acceptance test.
-When the user gives JSON arguments for the `foreman` tool, call `foreman` exactly once with exactly those arguments.
-Do not call any other tool. Do not change files yourself. After the tool returns, respond with one short line.
-PROMPT
-DRIVER_SYSTEM_PROMPT="$(cat "$LOG_DIR/driver-system-prompt.txt")"
+# Drive the foreman tool directly from Node instead of asking an LLM to be a one-call bridge.
+# The loop itself still exercises real pi subprocesses for planner/developer/tester; this only removes
+# flaky extra approve calls caused by the bridge model treating Gate 1/Gate 2 help text as instructions.
+PI_PKG_DIR="$(python3 - <<'PY'
+import os
+import shutil
+pi = shutil.which("pi")
+if not pi:
+    raise SystemExit("pi not found")
+print(os.path.dirname(os.path.dirname(os.path.realpath(pi))))
+PY
+)"
+DIRECT_ROOT="$TMP_ROOT/direct-driver"
+DIRECT_FOREMAN_DIR="$DIRECT_ROOT/extensions/foreman"
+DIRECT_FOREMAN_EXT="$DIRECT_FOREMAN_DIR/index.ts"
+DIRECT_DRIVER="$DIRECT_ROOT/call-foreman.mjs"
+DIRECT_SESSION_ID="gate-flow-test-session"
+mkdir -p "$DIRECT_ROOT/extensions" "$DIRECT_ROOT/node_modules/@earendil-works"
+cp -R "$(dirname "$LOOP_EXT")" "$DIRECT_FOREMAN_DIR"
+ln -s "$PI_PKG_DIR" "$DIRECT_ROOT/node_modules/@earendil-works/pi-coding-agent"
+if [[ -d "$PI_PKG_DIR/node_modules/@earendil-works" ]]; then
+  for pkg in "$PI_PKG_DIR/node_modules/@earendil-works"/*; do
+    name="$(basename "$pkg")"
+    [[ -e "$DIRECT_ROOT/node_modules/@earendil-works/$name" ]] || ln -s "$pkg" "$DIRECT_ROOT/node_modules/@earendil-works/$name"
+  done
+fi
+cat >"$DIRECT_DRIVER" <<'NODE'
+import fs from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const [extensionPath, promptPath, cwd, sessionId] = process.argv.slice(2);
+if (!extensionPath || !promptPath || !cwd || !sessionId) throw new Error("usage: call-foreman <extensionPath> <promptPath> <cwd> <sessionId>");
+
+// Foreman's runAgent helper detects pi's CLI script via process.argv[1]. This driver is not pi, so
+// force that detection to fall through to the `pi` binary for planner/developer/tester subprocesses.
+process.argv[1] = "";
+
+const prompt = fs.readFileSync(promptPath, "utf-8");
+const start = prompt.indexOf("{");
+const end = prompt.lastIndexOf("}");
+if (start < 0 || end < start) throw new Error(`prompt does not contain JSON args: ${prompt}`);
+const params = JSON.parse(prompt.slice(start, end + 1));
+
+let foremanTool;
+const pi = {
+  on() {},
+  registerCommand() {},
+  registerShortcut() {},
+  registerTool(def) {
+    if (def?.name === "foreman") foremanTool = def;
+  },
+};
+const mod = await import(pathToFileURL(extensionPath).href);
+mod.default(pi);
+if (!foremanTool) throw new Error("foreman tool did not register");
+
+console.log(JSON.stringify({ type: "tool_execution_start", toolName: "foreman", args: params }));
+const result = await foremanTool.execute(
+  "gate-flow-direct",
+  params,
+  new AbortController().signal,
+  (partialResult) => console.log(JSON.stringify({ type: "tool_execution_update", toolName: "foreman", partialResult })),
+  { cwd, hasUI: false, sessionManager: { getSessionId: () => sessionId } },
+);
+console.log(JSON.stringify({ type: "tool_execution_end", toolName: "foreman", result }));
+NODE
 
 seed_repo() {
   cd "$REPO"
@@ -323,28 +384,22 @@ console.log("restored ok");
 NODE
 }
 
-pi_args=()
-if [[ -n "${PI_GATE_FLOW_DRIVER_MODEL:-}" ]]; then
-  pi_args+=(--model "$PI_GATE_FLOW_DRIVER_MODEL")
-fi
-
 run_pi_sync() {
   local name=$1
   local prompt=$2
   local out="$LOG_DIR/$name.jsonl"
   local err="$LOG_DIR/$name.stderr"
-  echo "==> pi $name"
+  local prompt_file="$LOG_DIR/$name.prompt"
+  printf '%s\n' "$prompt" >"$prompt_file"
+  echo "==> foreman $name"
   (
     cd "$REPO"
-    PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 \
-      pi --mode json --print --no-session --no-context-files --no-builtin-tools --no-extensions \
-        --extension "$LOOP_EXT" --tools foreman --system-prompt "$DRIVER_SYSTEM_PROMPT" \
-        ${pi_args[@]+"${pi_args[@]}"} "$prompt"
+    PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 node "$DIRECT_DRIVER" "$DIRECT_FOREMAN_EXT" "$prompt_file" "$REPO" "$DIRECT_SESSION_ID"
   ) >"$out" 2>"$err" || {
     tail -80 "$err" >&2 || true
-    fail "pi command failed for $name (see $out / $err)"
+    fail "foreman direct driver failed for $name (see $out / $err)"
   }
-  grep -q '"toolName":"foreman"' "$out" || fail "pi command $name did not execute foreman tool (see $out)"
+  grep -q '"toolName":"foreman"' "$out" || fail "foreman direct driver $name did not execute foreman tool (see $out)"
 }
 
 start_pi_async() {
@@ -352,13 +407,12 @@ start_pi_async() {
   local prompt=$2
   local out="$LOG_DIR/$name.jsonl"
   local err="$LOG_DIR/$name.stderr"
-  echo "==> pi $name (background)"
+  local prompt_file="$LOG_DIR/$name.prompt"
+  printf '%s\n' "$prompt" >"$prompt_file"
+  echo "==> foreman $name (background)"
   (
     cd "$REPO"
-    PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 \
-      pi --mode json --print --no-session --no-context-files --no-builtin-tools --no-extensions \
-        --extension "$LOOP_EXT" --tools foreman --system-prompt "$DRIVER_SYSTEM_PROMPT" \
-        ${pi_args[@]+"${pi_args[@]}"} "$prompt"
+    PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 node "$DIRECT_DRIVER" "$DIRECT_FOREMAN_EXT" "$prompt_file" "$REPO" "$DIRECT_SESSION_ID"
   ) >"$out" 2>"$err" &
   PI_BG_PID=$!
 }
@@ -399,10 +453,10 @@ start_pi_async gate1_approve "$approve_prompt"
 wait_for_state in_progress 180
 if ! wait "$PI_BG_PID"; then
   tail -120 "$LOG_DIR/gate1_approve.stderr" >&2 || true
-  fail "pi command failed for gate1_approve"
+  fail "foreman direct driver failed for gate1_approve"
 fi
 PI_BG_PID=""
-grep -q '"toolName":"foreman"' "$LOG_DIR/gate1_approve.jsonl" || fail "pi command gate1_approve did not execute foreman tool"
+grep -q '"toolName":"foreman"' "$LOG_DIR/gate1_approve.jsonl" || fail "foreman direct driver gate1_approve did not execute foreman tool"
 assert_state awaiting_ship
 assert_json_state_fields awaiting_ship true false
 assert_log_event gate1_approved

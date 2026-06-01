@@ -169,16 +169,17 @@ export function transcriptsDir(workingDir: string, slug: string): string {
 	return path.join(taskDir(workingDir, slug), "transcripts");
 }
 
-/** Ensure .pi/.gitignore exists so only .pi/plans/ is committed. */
+/** Ensure .pi/.gitignore exists so only .pi/foreman.json and .pi/plans/ are committed. */
 function ensureGitignore(workingDir: string): void {
 	const piDir = path.join(workingDir, ".pi");
 	fs.mkdirSync(piDir, { recursive: true });
 	const giPath = path.join(piDir, ".gitignore");
 	const requiredLines = [
-		"# Only the ledger travels with the code; everything else in .pi is machine-local.",
-		"# Ignore everything, then re-include plans/ and recurse into its contents.",
+		"# Only the gate config and ledger travel with the code; everything else in .pi is machine-local.",
+		"# Ignore everything, then re-include foreman.json, plans/, and recurse into plans contents.",
 		"*",
 		"!.gitignore",
+		"!foreman.json",
 		"!plans/",
 		"!plans/**",
 		"# ...but keep machine-local noise out of the committed ledger.",
@@ -193,7 +194,7 @@ function ensureGitignore(workingDir: string): void {
 
 	let content = fs.readFileSync(giPath, "utf-8");
 	let changed = false;
-	for (const line of ["plans/*/transcripts/", "plans/*/activity.json"]) {
+	for (const line of ["!foreman.json", "plans/*/transcripts/", "plans/*/activity.json"]) {
 		if (!content.split(/\r?\n/).includes(line)) {
 			content = `${content.replace(/\s*$/, "\n")}${line}\n`;
 			changed = true;

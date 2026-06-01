@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-06-01T00:11:35.925Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "dc634ace-905f-4922-94ef-dce658e988cf",
+  "summary": "Updated AskUserQuestion to remove whole-question notes, preserve per-choice notes, and add an always-present custom answer option with pure selection helpers and tests.",
+  "filesChanged": [
+    "extensions/AskUserQuestion/logic.ts - custom answer pure logic and whole-question note removal",
+    "extensions/AskUserQuestion/index.ts - TUI custom answer rendering/input and note UI removal",
+    "extensions/AskUserQuestion/test/logic_test.sh - expanded logic tests for custom answers and removed note shape"
+  ],
+  "howToVerify": "bash extensions/AskUserQuestion/test/logic_test.sh",
+  "raw": "## Completed\nImplemented AskUserQuestion note-model update:\n- Removed whole-question notes from state, focus modes, UI, result shape, and hint text.\n- Preserved per-choice notes.\n- Added always-present `Custom answer:` option with pure custom selection logic and tests.\n\n## Files Changed\n- `extensions/AskUserQuestion/logic.ts` - added custom answer pure helpers; removed whole-question note model.\n- `extensions/AskUserQuestion/index.ts` - updated TUI rendering/input handling for inline custom answers; removed question-note UI.\n- `extensions/AskUserQuestion/test/logic_test.sh` - expanded unit coverage for custom answers and note removal.\n\n## How To Verify\n`bash extensions/AskUserQuestion/test/logic_test.sh`\n\n## Notes\nVerification passed locally. Unrelated working-tree changes existed and were left untouched.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n---DEV-JSON---\n{\n  \"summary\": \"Updated AskUserQuestion to remove whole-question notes, preserve per-choice notes, and add an always-present custom answer option with pure selection helpers and tests.\",\n  \"filesChanged\": [\n    \"extensions/AskUserQuestion/logic.ts - custom answer pure logic and whole-question note removal\",\n    \"extensions/AskUserQuestion/index.ts - TUI custom answer rendering/input and note UI removal\",\n    \"extensions/AskUserQuestion/test/logic_test.sh - expanded logic tests for custom answers and removed note shape\"\n  ],\n  \"howToVerify\": \"bash extensions/AskUserQuestion/test/logic_test.sh\"\n}\n---END-DEV-JSON---"
+}

@@ -5,6 +5,8 @@
  * unit tests without a live terminal.
  */
 
+export const CUSTOM_ANSWER_LABEL = "Custom answer:";
+
 export interface AskUserQuestionOption {
 	label: string;
 	description: string;
@@ -20,9 +22,9 @@ export interface AskUserQuestionItem {
 export interface SelectionState {
 	focusedIndex: number;
 	selectedIndexes: number[];
-	/** Whole-question note. */
-	note: string;
-	/** Per-choice notes keyed by option index. Only selected notes are returned. */
+	/** Inline free-text answer for the always-present custom option. */
+	customText: string;
+	/** Per-choice notes keyed by real option index. Only selected notes are returned. */
 	choiceNotes: Record<number, string>;
 }
 
@@ -31,7 +33,7 @@ export interface AskUserQuestionNavigationState {
 	states: SelectionState[];
 }
 
-export type AskUserQuestionFocusMode = "options" | "choice-note" | "question-note";
+export type AskUserQuestionFocusMode = "options" | "choice-note";
 
 export interface AskUserQuestionFocusState {
 	mode: AskUserQuestionFocusMode;
@@ -40,8 +42,6 @@ export interface AskUserQuestionFocusState {
 
 export interface AskUserQuestionAnswer {
 	selected: string | string[];
-	/** Whole-question note. */
-	note?: string;
 	/** Per-choice notes keyed by selected option label. */
 	choiceNotes?: Record<string, string>;
 }
@@ -72,11 +72,23 @@ export function decideOptionListEnterAction(currentQuestionIndex: number, totalQ
 	return currentQuestionIndex < totalQuestions - 1 ? "advance" : "submit";
 }
 
+export function getCustomOptionIndex(question: AskUserQuestionItem): number {
+	return question.options.length;
+}
+
+export function getOptionCount(question: AskUserQuestionItem): number {
+	return question.options.length + 1;
+}
+
+export function isCustomOption(question: AskUserQuestionItem, optionIndex: number): boolean {
+	return Number.isInteger(optionIndex) && optionIndex === getCustomOptionIndex(question);
+}
+
 export function createInitialSelectionState(question: AskUserQuestionItem): SelectionState {
 	return {
-		focusedIndex: question.options.length > 0 ? 0 : -1,
+		focusedIndex: getOptionCount(question) > 0 ? 0 : -1,
 		selectedIndexes: [],
-		note: "",
+		customText: "",
 		choiceNotes: {},
 	};
 }
@@ -101,15 +113,15 @@ function normalizeChoiceNotes(question: AskUserQuestionItem, state: SelectionSta
 }
 
 function normalizeState(question: AskUserQuestionItem, state: SelectionState): SelectionState {
-	const optionCount = question.options.length;
-	const selectedIndexes = Array.from(new Set(state.selectedIndexes))
+	const optionCount = getOptionCount(question);
+	const selectedIndexes = Array.from(new Set(state.selectedIndexes ?? []))
 		.filter((index) => Number.isInteger(index) && index >= 0 && index < optionCount)
 		.sort((a, b) => a - b);
 
 	return {
 		focusedIndex: clampIndex(state.focusedIndex, optionCount),
 		selectedIndexes: question.multiSelect ? selectedIndexes : selectedIndexes.slice(-1),
-		note: state.note ?? "",
+		customText: state.customText ?? "",
 		choiceNotes: normalizeChoiceNotes(question, state),
 	};
 }
@@ -120,7 +132,7 @@ export function normalizeSelectionState(question: AskUserQuestionItem, state: Se
 
 export function moveFocus(question: AskUserQuestionItem, state: SelectionState, delta: number): SelectionState {
 	const current = normalizeState(question, state);
-	const optionCount = question.options.length;
+	const optionCount = getOptionCount(question);
 	if (optionCount <= 0) return current;
 
 	return {
@@ -130,7 +142,7 @@ export function moveFocus(question: AskUserQuestionItem, state: SelectionState, 
 }
 
 export function setFocusedIndex(question: AskUserQuestionItem, state: SelectionState, index: number): SelectionState {
-	return normalizeState(question, { ...state, focusedIndex: clampIndex(index, question.options.length) });
+	return normalizeState(question, { ...state, focusedIndex: clampIndex(index, getOptionCount(question)) });
 }
 
 export function toggleFocusedOption(question: AskUserQuestionItem, state: SelectionState): SelectionState {
@@ -154,8 +166,25 @@ export function toggleFocusedOption(question: AskUserQuestionItem, state: Select
 	};
 }
 
-export function setNote(state: SelectionState, note: string): SelectionState {
-	return { ...state, note };
+export function setCustomText(question: AskUserQuestionItem, state: SelectionState, customText: string): SelectionState {
+	const current = normalizeState(question, state);
+	const customIndex = getCustomOptionIndex(question);
+	const selected = new Set(current.selectedIndexes);
+
+	if (customText.trim() === "") {
+		selected.delete(customIndex);
+	} else if (question.multiSelect) {
+		selected.add(customIndex);
+	} else {
+		selected.clear();
+		selected.add(customIndex);
+	}
+
+	return normalizeState(question, {
+		...current,
+		customText,
+		selectedIndexes: Array.from(selected),
+	});
 }
 
 export function setChoiceNote(
@@ -187,20 +216,37 @@ export function getChoiceNote(question: AskUserQuestionItem, state: SelectionSta
 	return current.choiceNotes[optionIndex] ?? "";
 }
 
-export function hasSelection(state: SelectionState): boolean {
-	return state.selectedIndexes.length > 0;
-}
-
 export function getSelectedLabels(question: AskUserQuestionItem, state: SelectionState): string[] {
 	const current = normalizeState(question, state);
 	return current.selectedIndexes
+		.filter((index) => !isCustomOption(question, index))
 		.map((index) => question.options[index]?.label)
 		.filter((label): label is string => typeof label === "string");
 }
 
+export function resolveSelected(question: AskUserQuestionItem, state: SelectionState): string | string[] {
+	const current = normalizeState(question, state);
+	const labels = getSelectedLabels(question, current);
+	const customText = current.customText.trim();
+	const customSelected = current.selectedIndexes.includes(getCustomOptionIndex(question));
+
+	if (question.multiSelect) {
+		return customSelected && customText ? [...labels, customText] : labels;
+	}
+
+	if (customSelected) return customText;
+	return labels[0] ?? "";
+}
+
+export function hasSelection(question: AskUserQuestionItem, state: SelectionState | undefined): boolean {
+	if (!state) return false;
+	const selected = resolveSelected(question, state);
+	return Array.isArray(selected) ? selected.length > 0 : selected !== "";
+}
+
 export function getSelectedChoiceNotes(question: AskUserQuestionItem, state: SelectionState): Record<string, string> {
 	const current = normalizeState(question, state);
-	const selected = new Set(current.selectedIndexes);
+	const selected = new Set(current.selectedIndexes.filter((index) => !isCustomOption(question, index)));
 	const notes: Record<string, string> = {};
 
 	for (const [rawIndex, value] of Object.entries(current.choiceNotes)) {
@@ -215,13 +261,9 @@ export function getSelectedChoiceNotes(question: AskUserQuestionItem, state: Sel
 }
 
 export function buildQuestionAnswer(question: AskUserQuestionItem, state: SelectionState): AskUserQuestionAnswer {
-	const labels = getSelectedLabels(question, state);
 	const answer: AskUserQuestionAnswer = {
-		selected: question.multiSelect ? labels : (labels[0] ?? ""),
+		selected: resolveSelected(question, state),
 	};
-
-	const note = state.note.trim();
-	if (note) answer.note = note;
 
 	const choiceNotes = getSelectedChoiceNotes(question, state);
 	if (Object.keys(choiceNotes).length > 0) answer.choiceNotes = choiceNotes;
@@ -234,7 +276,7 @@ export function summarizeQuestions(questions: AskUserQuestionItem[]): AskUserQue
 		header: question.header,
 		question: question.question,
 		multiSelect: question.multiSelect,
-		options: question.options.map((option) => option.label),
+		options: [...question.options.map((option) => option.label), CUSTOM_ANSWER_LABEL],
 	}));
 }
 
@@ -247,7 +289,7 @@ export function buildStructuredResult(
 
 	questions.forEach((question, index) => {
 		const state = states[index];
-		if (!state || !hasSelection(state)) return;
+		if (!state || !hasSelection(question, state)) return;
 		answers[question.header] = buildQuestionAnswer(question, state);
 	});
 
@@ -352,10 +394,6 @@ export function normalizeFocusState(
 ): AskUserQuestionFocusState {
 	const currentState = normalizeState(question, state);
 
-	if (focus.mode === "question-note") {
-		return { mode: "question-note", activeChoiceNoteIndex: null };
-	}
-
 	if (focus.mode === "choice-note") {
 		const requestedIndex = focus.activeChoiceNoteIndex;
 		let activeChoiceNoteIndex = currentState.focusedIndex;
@@ -368,8 +406,8 @@ export function normalizeFocusState(
 			activeChoiceNoteIndex = requestedIndex;
 		}
 
-		if (activeChoiceNoteIndex < 0) {
-			return { mode: "question-note", activeChoiceNoteIndex: null };
+		if (activeChoiceNoteIndex < 0 || activeChoiceNoteIndex >= question.options.length) {
+			return createInitialFocusState();
 		}
 
 		return { mode: "choice-note", activeChoiceNoteIndex };
@@ -386,16 +424,8 @@ export function cycleFocusMode(
 	const currentFocus = normalizeFocusState(question, state, focus);
 	const currentState = normalizeState(question, state);
 
-	if (currentFocus.mode === "options") {
-		if (currentState.focusedIndex >= 0) {
-			return { mode: "choice-note", activeChoiceNoteIndex: currentState.focusedIndex };
-		}
-
-		return { mode: "question-note", activeChoiceNoteIndex: null };
-	}
-
-	if (currentFocus.mode === "choice-note") {
-		return { mode: "question-note", activeChoiceNoteIndex: null };
+	if (currentFocus.mode === "options" && currentState.focusedIndex >= 0 && currentState.focusedIndex < question.options.length) {
+		return { mode: "choice-note", activeChoiceNoteIndex: currentState.focusedIndex };
 	}
 
 	return createInitialFocusState();

@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-01T00:11:54.090Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "ee401add-ce4a-4f8c-8f10-425436b47231",
+  "successState": "success",
+  "summary": "All three changes are properly implemented in genuine logic, not cheats:",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "bash extensions/AskUserQuestion/test/logic_test.sh",
+        "exitCode": 0,
+        "observation": "AskUserQuestion theme.bg allowed-color guard passed\nAskUserQuestion whole-question note removal guard passed\nAskUserQuestion pure logic tests passed\n"
+      }
+    ]
+  },
+  "raw": "All three changes are properly implemented in genuine logic, not cheats:\n\n1. **Whole-question note removed**: `SelectionState` has no `note` field; focus modes are only `\"options\" | \"choice-note\"`; no `setNote`/`answer.note`; hint line dropped question-note wording. Guard greps confirm removal.\n\n2. **Per-choice notes kept**: `setChoiceNote`, `getChoiceNote`, `getSelectedChoiceNotes` intact and keyed by selected option label.\n\n3. **Custom answer option added**: `CUSTOM_ANSWER_LABEL`, `isCustomOption`, `getCustomOptionIndex`, `setCustomText` are pure exported functions. `resolveSelected` correctly folds custom text — single-select replaces the selection (logic.ts:264-265), multi-select appends (logic.ts:260), empty contributes nothing (setCustomText deletes the custom index on blank text, logic.ts:174-176).\n\nTests genuinely exercise the real logic functions covering all required cases. Hint line at index.ts updated. theme.bg only uses `selectedBg` (allowed). Headless fallback present and tested.\n\nVERDICT: PASS"
+}

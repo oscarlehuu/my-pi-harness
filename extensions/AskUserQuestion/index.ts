@@ -5,26 +5,39 @@
  * UI primitives relied on:
  * - ctx.ui.custom(...) to mount the interactive all-questions dialog.
  * - Container/Text/Input from @earendil-works/pi-tui to render the dialog,
- *   explanatory text, per-choice notes, and the whole-question note field.
+ *   explanatory text, per-choice notes, and custom free-text answers.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Container, Input, Key, matchesKey, Spacer, Text, type Focusable } from "@earendil-works/pi-tui";
+import {
+	Container,
+	Input,
+	Key,
+	matchesKey,
+	Spacer,
+	Text,
+	visibleWidth,
+	type Component,
+	type Focusable,
+} from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	buildStructuredResult,
+	CUSTOM_ANSWER_LABEL,
 	createHeadlessFallback,
 	createInitialFocusState,
 	createInitialNavigationState,
 	cycleFocusMode,
 	decideOptionListEnterAction,
 	getChoiceNote,
+	getCustomOptionIndex,
 	hasSelection,
+	isCustomOption,
 	moveFocus,
 	moveQuestion,
 	returnFocusToOptions,
 	setChoiceNote,
-	setNote,
+	setCustomText,
 	setQuestionState,
 	shouldRenderChoiceNote,
 	toggleFocusedOption,
@@ -61,6 +74,23 @@ type TuiLike = { requestRender: () => void };
 
 type DialogResult = { states: SelectionState[] } | null;
 
+class InlineInputLine implements Component {
+	constructor(
+		private readonly prefix: string,
+		private readonly input: Input,
+	) {}
+
+	render(width: number): string[] {
+		const inputWidth = Math.max(1, width - visibleWidth(this.prefix));
+		const [line = ""] = this.input.render(inputWidth);
+		return [`${this.prefix}${line}`];
+	}
+
+	invalidate(): void {
+		this.input.invalidate();
+	}
+}
+
 function formatDetailsForContent(details: AskUserQuestionStructuredResult): string {
 	if (details.unavailable) {
 		return JSON.stringify({ unavailable: true, reason: details.reason, answers: details.answers }, null, 2);
@@ -95,6 +125,7 @@ class AskUserQuestionDialog extends Container implements Focusable {
 	private navigation: AskUserQuestionNavigationState;
 	private focusState: AskUserQuestionFocusState = createInitialFocusState();
 	private readonly noteInput = new Input();
+	private readonly customAnswerInput = new Input();
 	private statusMessage = "";
 	private _focused = false;
 
@@ -130,6 +161,7 @@ class AskUserQuestionDialog extends Container implements Focusable {
 	override invalidate(): void {
 		super.invalidate();
 		this.noteInput.invalidate();
+		this.customAnswerInput.invalidate();
 	}
 
 	handleInput(data: string): void {
@@ -157,15 +189,21 @@ class AskUserQuestionDialog extends Container implements Focusable {
 			return;
 		}
 
+		const question = this.currentQuestion();
+		const state = this.currentState();
+		const customFocused = isCustomOption(question, state.focusedIndex);
+
 		if (matchesKey(data, Key.up)) {
-			this.updateCurrentState(moveFocus(this.currentQuestion(), this.currentState(), -1));
+			this.updateCurrentState(moveFocus(question, state, -1));
+			this.prepareCustomInputForFocus();
 			this.statusMessage = "";
 			this.refresh();
 			return;
 		}
 
 		if (matchesKey(data, Key.down)) {
-			this.updateCurrentState(moveFocus(this.currentQuestion(), this.currentState(), 1));
+			this.updateCurrentState(moveFocus(question, state, 1));
+			this.prepareCustomInputForFocus();
 			this.statusMessage = "";
 			this.refresh();
 			return;
@@ -186,8 +224,8 @@ class AskUserQuestionDialog extends Container implements Focusable {
 			return;
 		}
 
-		if (matchesKey(data, Key.space) || data === " ") {
-			this.updateCurrentState(toggleFocusedOption(this.currentQuestion(), this.currentState()));
+		if ((matchesKey(data, Key.space) || data === " ") && !customFocused) {
+			this.updateCurrentState(toggleFocusedOption(question, state));
 			this.statusMessage = "";
 			this.refresh();
 			return;
@@ -195,6 +233,14 @@ class AskUserQuestionDialog extends Container implements Focusable {
 
 		if (matchesKey(data, Key.enter)) {
 			this.handleOptionListEnter();
+			return;
+		}
+
+		if (customFocused) {
+			this.customAnswerInput.handleInput(data);
+			this.updateCurrentState(setCustomText(question, this.currentState(), this.customAnswerInput.getValue()));
+			this.statusMessage = "";
+			this.refresh();
 		}
 	}
 
@@ -211,15 +257,7 @@ class AskUserQuestionDialog extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 		this.addText(this.theme.fg("text", question.question));
 		this.addChild(new Spacer(1));
-
-		if (question.options.length === 0) {
-			this.addText(this.theme.fg("warning", "No options were provided for this question."));
-		} else {
-			this.renderOptions(question, state);
-		}
-
-		this.addChild(new Spacer(1));
-		this.renderQuestionNote(state);
+		this.renderOptions(question, state);
 
 		if (this.statusMessage) {
 			this.addChild(new Spacer(1));
@@ -240,7 +278,7 @@ class AskUserQuestionDialog extends Container implements Focusable {
 				return this.theme.bg("selectedBg", this.theme.fg("text", this.theme.bold(label)));
 			}
 
-			return this.theme.fg(hasSelection(this.navigation.states[index]) ? "success" : "muted", label);
+			return this.theme.fg(hasSelection(question, this.navigation.states[index]) ? "success" : "muted", label);
 		});
 
 		this.addText(tabs.join(" "));
@@ -267,6 +305,28 @@ class AskUserQuestionDialog extends Container implements Focusable {
 				this.renderChoiceNote(question, state, index);
 			}
 		}
+
+		this.renderCustomOption(question, state);
+	}
+
+	private renderCustomOption(question: AskUserQuestionItem, state: SelectionState): void {
+		const index = getCustomOptionIndex(question);
+		const focused = index === state.focusedIndex;
+		const selected = state.selectedIndexes.includes(index) && state.customText.trim() !== "";
+		const cursor = focused && this.focusState.mode === "options" ? this.theme.fg("accent", ">") : " ";
+		const marker = question.multiSelect ? (selected ? "[x]" : "[ ]") : selected ? "(●)" : "( )";
+		const color = focused ? "accent" : selected ? "success" : "text";
+		const label = `${marker} ${CUSTOM_ANSWER_LABEL}`;
+
+		if (focused && this.focusState.mode === "options") {
+			const prefix = `${cursor} ${this.theme.fg(color, `${label} `)}`;
+			this.addChild(new InlineInputLine(prefix, this.customAnswerInput));
+			return;
+		}
+
+		const customText = state.customText.trim();
+		const suffix = customText ? ` ${customText}` : "";
+		this.addText(`${cursor} ${this.theme.fg(color, `${label}${suffix}`)}`);
 	}
 
 	private renderChoiceNote(question: AskUserQuestionItem, state: SelectionState, optionIndex: number): void {
@@ -281,17 +341,6 @@ class AskUserQuestionDialog extends Container implements Focusable {
 		if (note) {
 			this.addText(this.theme.fg("muted", `    Per-choice note: ${note}`));
 		}
-	}
-
-	private renderQuestionNote(state: SelectionState): void {
-		if (this.focusState.mode === "question-note") {
-			this.addText(this.theme.fg("muted", "Question note:"));
-			this.addChild(this.noteInput);
-			return;
-		}
-
-		const note = state.note.trim();
-		this.addText(this.theme.fg("muted", note ? `Question note: ${note}` : "Question note: (Tab twice to edit)"));
 	}
 
 	private currentQuestion(): AskUserQuestionItem {
@@ -310,6 +359,7 @@ class AskUserQuestionDialog extends Container implements Focusable {
 		this.saveActiveNoteFromInput();
 		this.focusState = cycleFocusMode(this.currentQuestion(), this.currentState(), this.focusState);
 		this.prepareNoteInputForFocus();
+		this.prepareCustomInputForFocus();
 		this.statusMessage = "";
 		this.refresh();
 	}
@@ -317,21 +367,17 @@ class AskUserQuestionDialog extends Container implements Focusable {
 	private prepareNoteInputForFocus(): void {
 		if (this.focusState.mode === "choice-note" && this.focusState.activeChoiceNoteIndex !== null) {
 			this.noteInput.setValue(getChoiceNote(this.currentQuestion(), this.currentState(), this.focusState.activeChoiceNoteIndex));
-			return;
 		}
+	}
 
-		if (this.focusState.mode === "question-note") {
-			this.noteInput.setValue(this.currentState().note);
+	private prepareCustomInputForFocus(): void {
+		if (this.focusState.mode === "options" && isCustomOption(this.currentQuestion(), this.currentState().focusedIndex)) {
+			this.customAnswerInput.setValue(this.currentState().customText);
 		}
 	}
 
 	private saveActiveNoteFromInput(): void {
 		const value = this.noteInput.getValue();
-		if (this.focusState.mode === "question-note") {
-			this.updateCurrentState(setNote(this.currentState(), value));
-			return;
-		}
-
 		if (this.focusState.mode === "choice-note" && this.focusState.activeChoiceNoteIndex !== null) {
 			this.updateCurrentState(setChoiceNote(this.currentQuestion(), this.currentState(), this.focusState.activeChoiceNoteIndex, value));
 		}
@@ -352,8 +398,10 @@ class AskUserQuestionDialog extends Container implements Focusable {
 			return;
 		}
 
+		this.saveActiveNoteFromInput();
 		this.navigation = moveQuestion(this.questions, this.navigation, delta);
 		this.focusState = returnFocusToOptions();
+		this.prepareCustomInputForFocus();
 		this.statusMessage = "";
 		this.refresh();
 	}
@@ -369,10 +417,14 @@ class AskUserQuestionDialog extends Container implements Focusable {
 	}
 
 	private submitIfComplete(): void {
-		const missingIndex = this.navigation.states.findIndex((state) => !hasSelection(state));
+		const missingIndex = this.navigation.states.findIndex((state, index) => {
+			const question = this.questions[index];
+			return !question || !hasSelection(question, state);
+		});
 		if (missingIndex >= 0) {
 			this.navigation = moveQuestion(this.questions, this.navigation, missingIndex - this.navigation.currentQuestionIndex);
 			this.focusState = returnFocusToOptions();
+			this.prepareCustomInputForFocus();
 			this.statusMessage = "Answer each question before submitting all questions.";
 			this.refresh();
 			return;
@@ -384,7 +436,7 @@ class AskUserQuestionDialog extends Container implements Focusable {
 	private helpText(): string {
 		return this.theme.fg(
 			"dim",
-			"←/→ tabs • ↑/↓ options • Space select/toggle • Tab per-choice note → question note → options • Enter next question (submit on last) • Esc note→options",
+			"←/→ tabs • ↑/↓ options • Type on Custom answer • Space select/toggle • Tab per-choice note → options • Enter next question (submit on last) • Esc note→options",
 		);
 	}
 
@@ -399,7 +451,12 @@ class AskUserQuestionDialog extends Container implements Focusable {
 	}
 
 	private updateInputFocus(): void {
-		this.noteInput.focused = this._focused && this.focusState.mode !== "options";
+		const customFocused =
+			this.navigation.currentQuestionIndex >= 0 &&
+			this.focusState.mode === "options" &&
+			isCustomOption(this.currentQuestion(), this.currentState().focusedIndex);
+		this.noteInput.focused = this._focused && this.focusState.mode === "choice-note";
+		this.customAnswerInput.focused = this._focused && customFocused;
 	}
 }
 
@@ -408,10 +465,10 @@ export default function AskUserQuestion(pi: ExtensionAPI) {
 		name: "AskUserQuestion",
 		label: "Ask User Question",
 		description:
-			"Ask the user one or more Claude Code-style questions with labeled options, optional multi-select, per-choice notes, and an optional whole-question note. Returns answers keyed by question header.",
-		promptSnippet: "Ask the user a structured multiple-choice question and return selected option labels plus any notes.",
+			"Ask the user one or more Claude Code-style questions with labeled options, optional multi-select, per-choice notes, and custom free-text answers. Returns answers keyed by question header.",
+		promptSnippet: "Ask the user a structured multiple-choice question and return selected option labels/custom answers plus per-choice notes.",
 		promptGuidelines: [
-			"Use AskUserQuestion when progress depends on a user decision that should be captured as structured selected option labels and optional notes.",
+			"Use AskUserQuestion when progress depends on a user decision that should be captured as structured selected option labels/custom answers and optional per-choice notes.",
 		],
 		parameters: AskUserQuestionParams,
 
@@ -424,11 +481,6 @@ export default function AskUserQuestion(pi: ExtensionAPI) {
 
 			if (questions.length === 0) {
 				return cancelledResult(questions, [], "No questions were provided.");
-			}
-
-			const missingOptions = questions.find((question) => question.options.length === 0);
-			if (missingOptions) {
-				return cancelledResult(questions, [], `Question \"${missingOptions.header}\" has no options.`);
 			}
 
 			if (signal?.aborted) {
@@ -481,11 +533,7 @@ export default function AskUserQuestion(pi: ExtensionAPI) {
 							.map(([label, note]) => `${label}: ${note}`)
 							.join("; ")
 					: "";
-				const noteParts = [
-					answer.note ? `note: ${answer.note}` : "",
-					choiceNotes ? `choice notes: ${choiceNotes}` : "",
-				].filter(Boolean);
-				const notes = noteParts.length > 0 ? theme.fg("muted", ` — ${noteParts.join("; ")}`) : "";
+				const notes = choiceNotes ? theme.fg("muted", ` — choice notes: ${choiceNotes}`) : "";
 				return `${theme.fg("success", "✓ ")}${theme.fg("accent", header)}: ${selected}${notes}`;
 			});
 			return new Text(lines.join("\n") || theme.fg("muted", "No answers"), 0, 0);

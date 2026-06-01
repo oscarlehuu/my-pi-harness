@@ -1,0 +1,18 @@
+# Plan: Phase A of the Foreman Dashboard (full spec at extensions/foreman/docs/DASHBOARD-SPEC.md, section "Phase A — Capture the work"). Goal: make foreman capture the FULL work of each agent run and persist it live to the ledger so a separate reader process can watch progress. Scope STRICTLY to Phase A — do NOT build the dashboard UI (Phase B), shortcut, or any TUI component.
+
+Concrete changes:
+1. extensions/foreman/index.ts `runAgent`: extend the stdout `onLine` parser to capture the full stream like the subagent extension does (extensions/subagent/index.ts is the reference). Capture, in order: agent_start (role, round, model, task), every `tool_call` (name + arguments) and `tool_result_end` (name, ok, truncated preview), assistant `text` chunks, usage (input/output/cost/contextTokens) from message_end, and agent_end (stopReason, exitCode). Keep the existing final-text return value working unchanged for the loop logic.
+2. As these events arrive, append them INCREMENTALLY (not just at the end) to a new per-run transcript file: .pi/plans/<slug>/transcripts/<ts>__<role>-r<n>__<uuid>.jsonl — one JSON event per line, matching the event shapes in spec section A1. Truncate args/preview; cap total file size at 50KB like subagent's PER_TASK_OUTPUT_CAP. Pass the transcript path + round + role into runAgent so it knows where to write.
+3. Add to extensions/foreman/ledger.ts: a transcriptsDir(workingDir, slug) path helper, and an atomic writeActivity(workingDir, slug, activity) that rewrites .pi/plans/<slug>/activity.json = { updatedAt, round, phase: "developer"|"verify"|"tester"|"idle", activeTranscript, note, pid }. The controller in index.ts must update activity.json at each phase transition (developer start, verify start, tester start, and back to idle when the round resolves).
+4. Transcripts + activity.json are machine-local: confirm .pi/.gitignore already excludes plans/*/transcripts/ (it does) and add activity.json to the ignore so neither is committed. The committed ledger stays state.json + handoffs/ + log.jsonl + plan.md.
+
+Constraints: do NOT change the loop control flow, gate logic, verdict parsing, or the append-only/quota-safe prompt handling. Keep changes minimal and scoped. The append-only --append-system-prompt invocation for agents must remain untouched.
+
+Verify command: bash extensions/foreman/test/gate_flow_test.sh (must still pass exit 0). Additionally the developer should add a focused check that, after a run, .pi/plans/<slug>/transcripts/ contains at least one non-empty .jsonl file and activity.json exists and is valid JSON.
+
+- Working directory: /Users/a1241968/Desktop/Oscar/my-pi-harness
+- Verify command: bash extensions/foreman/test/gate_flow_test.sh
+- Developer: openai-codex/gpt-5.5:xhigh implements; controller runs verify (exit code = ground truth).
+- Tester: cliproxy/claude-opus-4-8:high judges intent and catches cheats.
+- Up to 3 fix rounds, then escalate.
+

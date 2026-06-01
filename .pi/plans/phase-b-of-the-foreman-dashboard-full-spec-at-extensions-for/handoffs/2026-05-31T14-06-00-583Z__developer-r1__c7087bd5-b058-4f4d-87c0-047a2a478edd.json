@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-05-31T14:06:00.583Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "c7087bd5-b058-4f4d-87c0-047a2a478edd",
+  "summary": "Implemented the Foreman dashboard reader, TUI navigation stack, live polling, Alt+T shortcut, and reader tests. Verified with the new reader test plus existing gate-flow acceptance test.",
+  "filesChanged": [
+    "extensions/foreman/dashboard/reader.ts - pure ledger reader functions",
+    "extensions/foreman/dashboard/view.ts - navigable live dashboard TUI",
+    "extensions/foreman/dashboard/test/reader_test.sh - headless reader test",
+    "extensions/foreman/index.ts - Alt+T shortcut registration"
+  ],
+  "howToVerify": "bash extensions/foreman/dashboard/test/reader_test.sh && bash extensions/foreman/test/gate_flow_test.sh",
+  "raw": "## Completed\nImplemented Phase B Foreman Dashboard: pure ledger reader, navigable TUI, live polling, Alt+T shortcut, and reader tests.\n\n## Files Changed\n- `extensions/foreman/dashboard/reader.ts` - pure defensive ledger readers/view-model builders.\n- `extensions/foreman/dashboard/view.ts` - picker/root/agent TUI dashboard with polling and navigation.\n- `extensions/foreman/dashboard/test/reader_test.sh` - headless reader acceptance test.\n- `extensions/foreman/index.ts` - registered `alt+t` dashboard shortcut.\n\n## How To Verify\n`bash extensions/foreman/dashboard/test/reader_test.sh && bash extensions/foreman/test/gate_flow_test.sh`\n\n## Notes\nVerification command passed. Existing unrelated Phase A working-tree changes/ledgers were left untouched.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n\n---DEV-JSON---\n{\n  \"summary\": \"Implemented the Foreman dashboard reader, TUI navigation stack, live polling, Alt+T shortcut, and reader tests. Verified with the new reader test plus existing gate-flow acceptance test.\",\n  \"filesChanged\": [\n    \"extensions/foreman/dashboard/reader.ts - pure ledger reader functions\",\n    \"extensions/foreman/dashboard/view.ts - navigable live dashboard TUI\",\n    \"extensions/foreman/dashboard/test/reader_test.sh - headless reader test\",\n    \"extensions/foreman/index.ts - Alt+T shortcut registration\"\n  ],\n  \"howToVerify\": \"bash extensions/foreman/dashboard/test/reader_test.sh && bash extensions/foreman/test/gate_flow_test.sh\"\n}\n---END-DEV-JSON---"
+}

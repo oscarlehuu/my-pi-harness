@@ -238,6 +238,41 @@ assert_handoffs() {
   find "$PLAN_DIR/handoffs" -type f -name '*__tester-r*.json' | grep -q . || fail "missing tester handoff"
 }
 
+assert_phase_a_capture() {
+  local transcript_dir="$PLAN_DIR/transcripts"
+  local activity_file="$PLAN_DIR/activity.json"
+  [[ -d "$transcript_dir" ]] || fail "missing transcript directory: $transcript_dir"
+  find "$transcript_dir" -type f -name '*.jsonl' -size +0c | grep -q . || fail "expected at least one non-empty transcript jsonl"
+  [[ -f "$activity_file" ]] || fail "missing activity.json"
+  grep -Fxq 'plans/*/activity.json' "$REPO/.pi/.gitignore" || fail ".pi/.gitignore missing activity.json exclusion"
+  python3 - "$activity_file" "$transcript_dir" <<'PY'
+import json
+import pathlib
+import sys
+
+activity_path = pathlib.Path(sys.argv[1])
+transcript_dir = pathlib.Path(sys.argv[2])
+activity = json.loads(activity_path.read_text(encoding="utf-8"))
+required = {"updatedAt", "round", "phase", "activeTranscript", "note", "pid"}
+missing = sorted(required - set(activity))
+if missing:
+    raise SystemExit(f"activity.json missing fields: {missing}")
+if activity["phase"] not in {"developer", "verify", "tester", "idle"}:
+    raise SystemExit(f"bad activity phase: {activity['phase']!r}")
+files = sorted(p for p in transcript_dir.glob("*.jsonl") if p.stat().st_size > 0)
+if not files:
+    raise SystemExit("no non-empty transcript files")
+seen_start = False
+for path in files:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        event = json.loads(line)
+        if event.get("kind") == "agent_start":
+            seen_start = True
+if not seen_start:
+    raise SystemExit("transcripts did not contain an agent_start event")
+PY
+}
+
 pi_args=()
 if [[ -n "${PI_GATE_FLOW_DRIVER_MODEL:-}" ]]; then
   pi_args+=(--model "$PI_GATE_FLOW_DRIVER_MODEL")
@@ -325,6 +360,7 @@ assert_log_event verify_ran
 assert_log_event verdict
 assert_log_event gate2_awaiting
 assert_handoffs
+assert_phase_a_capture
 
 # Gate 2 approval: marks the task done.
 run_pi_sync gate2_approve "$approve_prompt"

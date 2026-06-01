@@ -6,4 +6,6 @@
 !plans/**
 # ...but keep machine-local noise out of the committed ledger.
 plans/*/transcripts/
+plans/*/activity.json
 plans/**/*.log
+plans/**/.DS_Store

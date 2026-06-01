@@ -44,7 +44,11 @@ brainstorm → plan → [GATE 1] → implement → verify → test → (fix↺) 
    - **GATE 2 (ship)** — on success it pauses again. Relay to the founder for sign-off.
 4. Advance a gate with `foreman({ resume: true, approve: true })`; revise with
    `foreman({ resume: true, reject: "<feedback>" })`. State persists in the ledger
-   (`<repo>/.pi/plans/<task>/`), so a killed run resumes where it stopped.
+   (`<repo>/.pi/plans/<task>/`), so a killed run resumes where it stopped. `resume` targets the
+   task **this session created** (the ledger stamps `ownerSessionId`), so two sessions can run
+   different tasks in one repo without an approve/reject hijacking the other's task. Only when a
+   repo has multiple open tasks and none is yours do you pass `foreman({ resume: true, slug: "…",
+   approve: true })` — foreman returns the list of open slugs to choose from.
 
 The Foreman enforces the gates and retries; you carry the founder's decisions in and out of it.
 Full operating manual: `extensions/foreman/docs/CHARTER.md`.

@@ -7,8 +7,27 @@ press `←` to come back. Open/minimize anytime via a keyboard shortcut.
 Founder decisions locked (do not relitigate without asking):
 1. Surface = **full navigable dashboard** (not just an inline block).
 2. **Live** — reflects work as it happens, not only post-hoc replay.
-3. Entry point = a **keyboard shortcut** (open / minimize).
+3. Entry point = a **keyboard shortcut**: **Ctrl+B** (open / minimize).
 4. Capture = **full transcript** per agent (every tool call + args + output, persisted).
+5. v1 includes a **task picker** (root lists tasks → enter mission control).
+6. Transcripts are **machine-local** (not committed) for now.
+
+Key choice rationale (the hard-won version, verified in pi source):
+- **Alt+T** — dropped. Alt = the macOS Option key; Mac terminals don't send it as Meta by default
+  (⌥T types `†`, not the `ESC t` bytes pi matches at `keys.ts:1164`).
+- **Ctrl+T** — dropped. pi's extension runner classifies built-ins by a
+  `RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS` list (`core/extensions/runner.ts:62`). A key bound
+  to a reserved action is a **hard block** (`runner.ts:434` — "conflicts with built-in shortcut.
+  Skipping."); a key bound to a non-reserved built-in is overridable but logs a startup warning;
+  a key bound to **no** default action registers freely. `ctrl+t` = `app.thinking.toggle`, which is
+  reserved → hard-blocked. (Note: this contradicts the earlier assumption that
+  `custom-editor.ts:31` dispatch order lets extensions win — that only governs runtime dispatch of
+  *successfully registered* shortcuts, not registration itself.)
+- **Ctrl+B** — chosen. It has **no** app-level default binding in pi (`core/keybindings.ts` binds
+  ctrl+a,c,d,g,l,n,o,p,r,s,t,u,v,x,z — no `b`), so it is neither reserved nor a built-in: it
+  registers with no conflict and no warning. It is the editor's emacs "cursor-left" at the tui
+  level, but extension shortcuts are dispatched before the editor sees the key
+  (`custom-editor.ts:31`), so the dashboard wins. Works in every terminal, no macOS setup.
 
 ---
 
@@ -145,19 +164,20 @@ internal **navigation stack**: root = orchestrator; drilling pushes an agent vie
 
 ### B3. Navigation / keys
 
-- Shortcut (proposed **Ctrl+G** — "go to foreman"; verify no conflict in keybindings.md, fall
-  back to Ctrl+T if taken). Same key toggles: open when closed, no-op when already open.
-- Root: `↑/↓` select row, `→`/`Enter` push agent view, `Esc` close (minimize), `r` force refresh.
+- Shortcut **Ctrl+B** (no default app binding → registers cleanly, no warning). Same key toggles:
+  open when closed, no-op when already open.
+- Picker: `↑/↓` select task, `→`/`Enter` enter root, `Esc` minimize.
+- Root: `↑/↓` select row, `→`/`Enter` push agent view, `←`/`Esc` back to picker, `r` force refresh.
 - Agent view: `↑/↓`/`PgUp`/`PgDn` scroll, `g/G` top/bottom, `←`/`Esc` pop to root.
 - The component never blocks the loop: it's read-only over the ledger. Closing it leaves the
   headless foreman subprocess running untouched.
 
 ### B4. Which task does it open?
 
-Default: the **most-recently-updated** non-done task in `cwd` (reuse `findResumable`, but don't
-exclude done — allow inspecting finished tasks too). If multiple, root view can list tasks first
-(a task picker) then enter mission control. v1 can start with "latest"; task picker is a small
-follow-up.
+**v1 ships the task picker.** On open, the dashboard lists all tasks in `cwd` (scan
+`.pi/plans/*/state.json`, including done ones, newest-updated first) as the first screen; selecting
+one enters its mission-control root view. `←`/`Esc` from the root returns to the picker; `Esc` from
+the picker minimizes. (So the nav stack is: picker → root → agent view.)
 
 ---
 
@@ -195,10 +215,8 @@ No change to the loop's control flow, gates, verdict logic, or quota-safe prompt
 
 ## Open questions for the founder
 
-- **Shortcut key**: Ctrl+G ok, or prefer another? (Will confirm it's unbound first.)
-- **Task picker vs. latest-only** for v1: start with "open latest task," add a picker later — ok?
-- **Commit transcripts?** Spec keeps them machine-local (matches PHASE2 decision; committed
-  ledger stays the summary). Say so if you'd rather they travel with the repo.
+(All resolved with the founder: Ctrl+B shortcut — Alt+T dropped (macOS Option ≠ Alt), Ctrl+T dropped
+(reserved built-in, hard-blocked); task picker in v1; transcripts machine-local.)
 
 ## Out of scope (v1)
 Cross-project global dashboard; editing/steering agents from the view (read-only only);

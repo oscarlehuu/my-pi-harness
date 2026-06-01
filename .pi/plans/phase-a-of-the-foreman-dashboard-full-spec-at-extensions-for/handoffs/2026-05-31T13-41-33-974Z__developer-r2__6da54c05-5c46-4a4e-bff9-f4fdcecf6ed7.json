@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-05-31T13:41:33.974Z",
+  "role": "developer",
+  "round": 2,
+  "sessionId": "6da54c05-5c46-4a4e-bff9-f4fdcecf6ed7",
+  "summary": "Implemented Foreman Phase A live capture: agent transcripts are written incrementally and activity.json is atomically updated through developer/verify/tester/idle phases. Added ignore rules and acceptance assertions for transcript/activity artifacts.",
+  "filesChanged": [
+    "extensions/foreman/index.ts - captures stream events into capped JSONL transcripts and updates activity by phase",
+    "extensions/foreman/ledger.ts - added transcript path helper and atomic activity writer",
+    ".pi/.gitignore - ignores machine-local activity.json",
+    "extensions/foreman/test/gate_flow_test.sh - validates transcript and activity artifacts after a run"
+  ],
+  "howToVerify": "bash extensions/foreman/test/gate_flow_test.sh",
+  "raw": "## Completed\nImplemented Phase A capture for Foreman: per-agent live transcript JSONL files, activity.json phase updates, machine-local ignores, and acceptance coverage.\n\n## Files Changed\n- `extensions/foreman/index.ts` - captures agent stream events and writes capped live transcript files; updates activity per phase.\n- `extensions/foreman/ledger.ts` - added `transcriptsDir()` and atomic `writeActivity()`.\n- `.pi/.gitignore` - ignores `plans/*/activity.json`.\n- `extensions/foreman/test/gate_flow_test.sh` - added transcript/activity JSON assertions.\n\n## How To Verify\n`bash extensions/foreman/test/gate_flow_test.sh`\n\n## Notes\nVerified successfully with the command above.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n---DEV-JSON---\n{\n  \"summary\": \"Implemented Foreman Phase A live capture: agent transcripts are written incrementally and activity.json is atomically updated through developer/verify/tester/idle phases. Added ignore rules and acceptance assertions for transcript/activity artifacts.\",\n  \"filesChanged\": [\n    \"extensions/foreman/index.ts - captures stream events into capped JSONL transcripts and updates activity by phase\",\n    \"extensions/foreman/ledger.ts - added transcript path helper and atomic activity writer\",\n    \".pi/.gitignore - ignores machine-local activity.json\",\n    \"extensions/foreman/test/gate_flow_test.sh - validates transcript and activity artifacts after a run\"\n  ],\n  \"howToVerify\": \"bash extensions/foreman/test/gate_flow_test.sh\"\n}\n---END-DEV-JSON---"
+}

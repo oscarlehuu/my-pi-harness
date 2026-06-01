@@ -17,20 +17,22 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	type Handoff,
 	type LedgerState,
 	type SuccessState,
 	appendLog,
-	findResumable,
 	initLedger,
+	resolveResumable,
 	listHandoffs,
 	readState,
 	taskDir,
+	transcriptsDir,
+	writeActivity,
 	writeHandoff,
 	writeState,
 } from "./ledger.ts";
+import { ForemanDashboard } from "./dashboard/view.ts";
 
 interface AgentDef {
 	name: string;
@@ -67,6 +69,89 @@ interface RunResult {
 	stderr: string;
 }
 
+type AgentRole = "developer" | "tester";
+
+interface RunAgentOptions {
+	role: AgentRole;
+	round: number;
+	transcriptPath: string;
+	signal?: AbortSignal;
+}
+
+const PER_TASK_OUTPUT_CAP = 50 * 1024;
+const TRANSCRIPT_ARGS_CAP = 4 * 1024;
+const TRANSCRIPT_PREVIEW_CAP = 4 * 1024;
+const TRANSCRIPT_TEXT_CAP = 8 * 1024;
+const TRANSCRIPT_TASK_CAP = 8 * 1024;
+
+function byteLength(s: string): number {
+	return Buffer.byteLength(s, "utf8");
+}
+
+function truncateUtf8(s: string, maxBytes: number): string {
+	if (maxBytes <= 0) return "";
+	if (byteLength(s) <= maxBytes) return s;
+	const suffix = "…[truncated]";
+	const suffixBytes = byteLength(suffix);
+	const limit = Math.max(0, maxBytes - suffixBytes);
+	let out = s.slice(0, limit);
+	while (byteLength(out) > limit) out = out.slice(0, -1);
+	return limit > 0 ? `${out}${suffix}` : s.slice(0, maxBytes);
+}
+
+function safeStringify(value: unknown): string {
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return String(value);
+	}
+}
+
+function truncateTranscriptValue(value: unknown, maxBytes: number): unknown {
+	const encoded = safeStringify(value);
+	if (byteLength(encoded) <= maxBytes) return value;
+	return truncateUtf8(encoded, maxBytes);
+}
+
+function contentPreview(value: unknown): string {
+	if (value == null) return "";
+	if (typeof value === "string") return value;
+	if (Array.isArray(value)) {
+		return value
+			.map((part) => {
+				if (typeof part === "string") return part;
+				if (part?.type === "text" && typeof part.text === "string") return part.text;
+				return safeStringify(part);
+			})
+			.join("\n");
+	}
+	if (typeof value === "object" && value && "content" in value) return contentPreview((value as any).content);
+	return safeStringify(value);
+}
+
+function makeTranscriptWriter(transcriptPath: string): (event: Record<string, unknown>) => void {
+	fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+	fs.writeFileSync(transcriptPath, "", { flag: "a" });
+	let written = fs.statSync(transcriptPath).size;
+	return (event) => {
+		if (written >= PER_TASK_OUTPUT_CAP) return;
+		const line = `${JSON.stringify({ t: new Date().toISOString(), ...event })}\n`;
+		const lineBytes = byteLength(line);
+		if (written + lineBytes > PER_TASK_OUTPUT_CAP) return;
+		fs.appendFileSync(transcriptPath, line);
+		written += lineBytes;
+	};
+}
+
+function transcriptFilePath(cwd: string, slug: string, role: AgentRole, round: number, sessionId: string): string {
+	const ts = new Date().toISOString().replace(/[:.]/g, "-");
+	const fpath = path.join(transcriptsDir(cwd, slug), `${ts}__${role}-r${round}__${sessionId}.jsonl`);
+	fs.mkdirSync(path.dirname(fpath), { recursive: true });
+	fs.writeFileSync(fpath, "", { flag: "a" });
+	return fpath;
+}
+
 /** Run the verify command directly. Exit code is GROUND TRUTH for pass/fail (decision B). */
 function runVerify(command: string, cwd: string, signal?: AbortSignal): Promise<{ exitCode: number; output: string }> {
 	return new Promise((resolve) => {
@@ -85,10 +170,19 @@ function runVerify(command: string, cwd: string, signal?: AbortSignal): Promise<
 }
 
 /** Spawn one agent subprocess, collect final text output. Append-only system prompt (quota-safe). */
-async function runAgent(agent: AgentDef, task: string, cwd: string, signal?: AbortSignal): Promise<RunResult> {
+async function runAgent(agent: AgentDef, task: string, cwd: string, options: RunAgentOptions): Promise<RunResult> {
 	const args = ["--mode", "json", "-p", "--no-session"];
 	if (agent.model) args.push("--model", agent.model);
 	if (agent.tools?.length) args.push("--tools", agent.tools.join(","));
+
+	const appendTranscript = makeTranscriptWriter(options.transcriptPath);
+	appendTranscript({
+		kind: "agent_start",
+		role: options.role,
+		round: options.round,
+		model: agent.model ?? "default",
+		task: truncateUtf8(task, TRANSCRIPT_TASK_CAP),
+	});
 
 	let tmpDir: string | null = null;
 	if (agent.systemPrompt.trim()) {
@@ -100,11 +194,44 @@ async function runAgent(agent: AgentDef, task: string, cwd: string, signal?: Abo
 	args.push(`Task: ${task}`);
 
 	const texts: string[] = [];
+	const seenToolCallIds = new Set<string>();
+	const seenToolResultIds = new Set<string>();
+	let currentAssistantTextCaptured = false;
+	let lastStopReason: string | undefined;
 	let stderr = "";
+	let wasAborted = false;
 	const exitCode = await new Promise<number>((resolve) => {
 		const inv = piInvocation(args);
 		const proc = spawn(inv.command, inv.args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
 		let buffer = "";
+
+		const recordToolCall = (id: unknown, name: unknown, toolArgs: unknown) => {
+			const callId = typeof id === "string" ? id : undefined;
+			if (callId) {
+				if (seenToolCallIds.has(callId)) return;
+				seenToolCallIds.add(callId);
+			}
+			appendTranscript({
+				kind: "tool_call",
+				name: String(name ?? "unknown"),
+				args: truncateTranscriptValue(toolArgs ?? {}, TRANSCRIPT_ARGS_CAP),
+			});
+		};
+
+		const recordToolResult = (id: unknown, name: unknown, ok: boolean, result: unknown) => {
+			const resultId = typeof id === "string" ? id : undefined;
+			if (resultId) {
+				if (seenToolResultIds.has(resultId)) return;
+				seenToolResultIds.add(resultId);
+			}
+			appendTranscript({
+				kind: "tool_result",
+				name: String(name ?? "unknown"),
+				ok,
+				preview: truncateUtf8(contentPreview(result), TRANSCRIPT_PREVIEW_CAP),
+			});
+		};
+
 		const onLine = (line: string) => {
 			if (!line.trim()) return;
 			let ev: any;
@@ -113,9 +240,62 @@ async function runAgent(agent: AgentDef, task: string, cwd: string, signal?: Abo
 			} catch {
 				return;
 			}
-			if (ev.type === "message_end" && ev.message?.role === "assistant") {
-				for (const c of ev.message.content ?? []) if (c.type === "text") texts.push(c.text);
+
+			if (ev.type === "message_start" && ev.message?.role === "assistant") {
+				currentAssistantTextCaptured = false;
 			}
+
+			if (ev.type === "message_update") {
+				const assistantEvent = ev.assistantMessageEvent;
+				if (assistantEvent?.type === "text_delta" && typeof assistantEvent.delta === "string") {
+					currentAssistantTextCaptured = true;
+					appendTranscript({ kind: "text", text: truncateUtf8(assistantEvent.delta, TRANSCRIPT_TEXT_CAP) });
+				}
+			}
+
+			if (ev.type === "message_end" && ev.message?.role === "assistant") {
+				const content = ev.message.content ?? [];
+				for (const c of content) {
+					if (c.type === "text") {
+						texts.push(c.text);
+						if (!currentAssistantTextCaptured) appendTranscript({ kind: "text", text: truncateUtf8(c.text, TRANSCRIPT_TEXT_CAP) });
+					}
+					if (c.type === "toolCall") recordToolCall(c.id, c.name, c.arguments ?? c.args ?? c.input);
+				}
+				currentAssistantTextCaptured = false;
+
+				const usage = ev.message.usage;
+				if (usage) {
+					const cost = typeof usage.cost === "number" ? usage.cost : usage.cost?.total;
+					appendTranscript({
+						kind: "usage",
+						input: usage.input ?? 0,
+						output: usage.output ?? 0,
+						cost: cost ?? 0,
+						contextTokens: usage.totalTokens ?? usage.contextTokens ?? 0,
+					});
+				}
+				if (ev.message.stopReason) lastStopReason = ev.message.stopReason;
+			}
+
+			if (ev.type === "tool_execution_start") {
+				recordToolCall(ev.toolCallId, ev.toolName, ev.args ?? ev.input);
+			}
+
+			if (ev.type === "tool_execution_end") {
+				recordToolResult(ev.toolCallId, ev.toolName, !ev.isError, ev.result);
+			}
+
+			if (ev.type === "tool_result_end" && ev.message) {
+				recordToolResult(
+					ev.toolCallId ?? ev.message.toolCallId,
+					ev.toolName ?? ev.message.toolName ?? ev.message.name,
+					!(ev.isError ?? ev.message.isError),
+					ev.message.content ?? ev.message.result,
+				);
+			}
+
+			if (ev.type === "agent_end" && ev.stopReason) lastStopReason = ev.stopReason;
 		};
 		proc.stdout.on("data", (d) => {
 			buffer += d.toString();
@@ -126,9 +306,22 @@ async function runAgent(agent: AgentDef, task: string, cwd: string, signal?: Abo
 		proc.stderr.on("data", (d) => {
 			stderr += d.toString();
 		});
-		proc.on("close", (code) => resolve(code ?? 0));
-		proc.on("error", () => resolve(1));
-		if (signal) signal.addEventListener("abort", () => proc.kill("SIGTERM"));
+		proc.on("close", (code) => {
+			if (buffer.trim()) onLine(buffer);
+			const finalCode = code ?? 0;
+			appendTranscript({ kind: "agent_end", stopReason: wasAborted ? "aborted" : (lastStopReason ?? "unknown"), exitCode: finalCode });
+			resolve(finalCode);
+		});
+		proc.on("error", () => {
+			appendTranscript({ kind: "agent_end", stopReason: "error", exitCode: 1 });
+			resolve(1);
+		});
+		if (options.signal) {
+			options.signal.addEventListener("abort", () => {
+				wasAborted = true;
+				proc.kill("SIGTERM");
+			});
+		}
 	});
 	if (tmpDir) await fs.promises.rm(tmpDir, { recursive: true, force: true });
 	return { text: texts.join("\n").trim(), exitCode, stderr };
@@ -172,13 +365,29 @@ const LoopParams = {
 		maxRounds: { type: "number", description: "Max dev->test->fix rounds (default 3)." },
 		cwd: { type: "string", description: "Working directory of the target repo (default current)." },
 		resume: { type: "boolean", description: "Resume a paused/in-progress task in this repo instead of starting new." },
+		slug: { type: "string", description: "Target a specific task by slug (needed only when a repo has multiple open tasks from different sessions)." },
 		approve: { type: "boolean", description: "Approve the current gate (plan at start, ship after success) and continue." },
 		reject: { type: "string", description: "Reject the current gate with feedback; the task is halted for revision." },
 	},
 	required: [],
 } as const;
 
+let dashboardOpen = false;
+
 export default function (pi: ExtensionAPI) {
+	pi.registerShortcut("ctrl+b", {
+		description: "Foreman dashboard",
+		handler: async (ctx) => {
+			if (!ctx.hasUI || dashboardOpen) return;
+			dashboardOpen = true;
+			try {
+				await ctx.ui.custom<void>((tui, theme, _keybindings, done) => new ForemanDashboard(ctx.cwd, tui, theme, done));
+			} finally {
+				dashboardOpen = false;
+			}
+		},
+	});
+
 	pi.registerTool({
 		name: "foreman",
 		label: "Foreman (gated dev-test-fix orchestrator)",
@@ -189,27 +398,29 @@ export default function (pi: ExtensionAPI) {
 			"rounds then run (tester verdict success/partial/blocked/fail; on 'fail' the verdict is fed",
 			"back and retried until success or maxRounds). GATE 2 (ship): on success it pauses again for",
 			"the founder's approval before marking done. Approve a gate with { resume: true, approve: true }",
-			"or revise with { resume: true, reject: '<feedback>' }. Drives the developer + tester crew agents",
-			"(the CTO can also use scout via the subagent tool for recon before starting a task).",
+			"or revise with { resume: true, reject: '<feedback>' }; resume targets THIS session's own task, so",
+			"only pass { slug } when a repo has multiple open tasks from different sessions. Drives the",
+			"developer + tester crew agents (the CTO can also use scout via the subagent tool for recon).",
 		].join(" "),
 		parameters: LoopParams as any,
 
 		async execute(_id: string, params: any, signal: AbortSignal, onUpdate: any, ctx: any) {
 			const cwd: string = params.cwd ?? ctx.cwd;
 			const maxRounds: number = params.maxRounds ?? 3;
+			const sessionId: string | undefined = ctx.sessionManager?.getSessionId?.();
 
 			let state: LedgerState;
 			if (params.resume) {
-				const found = findResumable(cwd);
-				if (!found) {
-					return { content: [{ type: "text", text: "No resumable task found in this repo." }] };
+				const resolved = resolveResumable(cwd, { slug: params.slug, sessionId });
+				if (!resolved.state) {
+					return { content: [{ type: "text", text: resolved.error ?? "No resumable task found in this repo." }] };
 				}
-				state = found;
+				state = resolved.state;
 			} else {
 				if (!params.task) {
 					return { content: [{ type: "text", text: "Provide `task` to start, or `resume: true`." }] };
 				}
-				state = initLedger(cwd, params.task, maxRounds, params.verifyCommand);
+				state = initLedger(cwd, params.task, maxRounds, params.verifyCommand, sessionId);
 			}
 
 			const slug = state.slug;
@@ -305,7 +516,21 @@ export default function (pi: ExtensionAPI) {
 				// ---- DEVELOPER ----
 				emit(`Round ${round}: developer...`);
 				const devSession = randomUUID();
-				const devRun = await runAgent(developer, devContext, cwd, signal);
+				const devTranscript = transcriptFilePath(cwd, slug, "developer", round, devSession);
+				writeActivity(cwd, slug, {
+					round,
+					phase: "developer",
+					activeTranscript: path.basename(devTranscript),
+					note: "running…",
+					pid: process.pid,
+					ownerSessionId: sessionId,
+				});
+				const devRun = await runAgent(developer, devContext, cwd, {
+					role: "developer",
+					round,
+					transcriptPath: devTranscript,
+					signal,
+				});
 				const devBlock = extractJsonBlock(devRun.text, "---DEV-JSON---", "---END-DEV-JSON---");
 				const devHandoff: Handoff = {
 					timestamp: new Date().toISOString(),
@@ -323,6 +548,14 @@ export default function (pi: ExtensionAPI) {
 				const verifyCmd: string | undefined = verifyCommand ?? devBlock?.howToVerify;
 				let verifyExit: number | null = null;
 				let verifyOutput = "";
+				writeActivity(cwd, slug, {
+					round,
+					phase: "verify",
+					activeTranscript: null,
+					note: verifyCmd ? `running ${verifyCmd}` : "skipped (no verify command)",
+					pid: process.pid,
+					ownerSessionId: sessionId,
+				});
 				if (verifyCmd) {
 					emit(`Round ${round}: verify \`${verifyCmd}\`...`);
 					const v = await runVerify(verifyCmd, cwd, signal);
@@ -342,7 +575,21 @@ export default function (pi: ExtensionAPI) {
 					`Read the changed files to confirm the change actually fulfills the task intent (not just that ` +
 					`a command exited 0 — watch for cheats like hardcoding or editing tests). Then emit your VERDICT line.`;
 				const testSession = randomUUID();
-				const testRun = await runAgent(tester, testerTask, cwd, signal);
+				const testTranscript = transcriptFilePath(cwd, slug, "tester", round, testSession);
+				writeActivity(cwd, slug, {
+					round,
+					phase: "tester",
+					activeTranscript: path.basename(testTranscript),
+					note: "running…",
+					pid: process.pid,
+					ownerSessionId: sessionId,
+				});
+				const testRun = await runAgent(tester, testerTask, cwd, {
+					role: "tester",
+					round,
+					transcriptPath: testTranscript,
+					signal,
+				});
 				const { successState: judged, parsedFrom } = parseVerdict(testRun.text);
 
 				// Combine ground truth (exit code) with the tester's judgment.
@@ -377,7 +624,16 @@ export default function (pi: ExtensionAPI) {
 				state.lastReviewedHandoffCount = listHandoffs(cwd, slug).length;
 				writeState(cwd, state);
 
-				emit(`Round ${round}: ${successState.toUpperCase()} (verify exit=${verifyExit ?? "n/a"}) — ${testHandoff.summary}`);
+				const roundSummary = `${successState.toUpperCase()} (verify exit=${verifyExit ?? "n/a"}) — ${testHandoff.summary}`;
+				writeActivity(cwd, slug, {
+					round,
+					phase: "idle",
+					activeTranscript: path.basename(testTranscript),
+					note: roundSummary.slice(0, 500),
+					pid: process.pid,
+					ownerSessionId: sessionId,
+				});
+				emit(`Round ${round}: ${roundSummary}`);
 
 				// ---- DECIDE ----
 				if (successState === "success") {

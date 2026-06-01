@@ -179,6 +179,29 @@ internal **navigation stack**: root = orchestrator; drilling pushes an agent vie
 one enters its mission-control root view. `←`/`Esc` from the root returns to the picker; `Esc` from
 the picker minimizes. (So the nav stack is: picker → root → agent view.)
 
+## Phase C — Footer statusline (always-on, no dashboard needed)
+
+The ctrl+b dashboard is a deliberate, full-screen drill-down. Phase C surfaces the same live
+signal **without opening anything**, on pi's footer status bar (`ctx.ui.setStatus(key, text)` —
+renders extension statuses as one line, ANSI preserved, no-op when `hasUI` is false).
+
+```
+foreman ▸ Build AskUserQuestion…:test   ✓ Foreman dashboard…
+```
+
+- **Scoped to the calling session.** The foreman tool runs inside the session's own process, so
+  the line shows only tasks this session owns (`ownerSessionId`), newest-first. Two sessions in
+  one repo each see their own work — never each other's.
+- **One segment per task:** a state glyph + a short task label. The actively-running task also
+  shows the crew agent currently spawning (`:dev` / `:verify` / `:test`, from `activity.json`).
+- **Glyphs:** `▸` running (accent) · `◆` at a gate (warning) · `✓` done (success, the green tick)
+  · `⚠` escalated · `·` idle. Overflow past 4 tasks collapses into a `+N` suffix.
+- Pushed on every phase transition and at each gate/terminal return (`done()`), so it tracks the
+  loop live. Stale `activity.json` (older than ~20s — a crashed run) is not shown as live.
+- **Pure model + format** live in `dashboard/reader.ts` (`buildStatuslineModel`, `formatStatusline`
+  with an injectable colorizer) so they unit-test headlessly; `index.ts` only reads `ctx.ui.theme`
+  and calls `setStatus`. The full developer/tester/verify drill-down stays in the ctrl+b dashboard.
+
 ---
 
 ## What gets built (the only new code)

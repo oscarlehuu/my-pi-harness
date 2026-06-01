@@ -33,6 +33,9 @@ import {
 	writeState,
 } from "./ledger.ts";
 import { ForemanDashboard } from "./dashboard/view.ts";
+import { buildStatuslineModel, formatStatusline } from "./dashboard/reader.ts";
+
+const STATUS_KEY = "foreman";
 
 interface AgentDef {
 	name: string;
@@ -431,8 +434,23 @@ export default function (pi: ExtensionAPI) {
 				transcript.push(line);
 				onUpdate?.({ content: [{ type: "text", text: transcript.join("\n") }] });
 			};
-			const done = () => ({ content: [{ type: "text", text: transcript.join("\n") }] });
 			const verifyCommand = state.verifyCommand ?? params.verifyCommand;
+
+			// Push this session's foreman tasks to the footer statusline (newest-first, with the live
+			// crew agent). No-op when there's no interactive UI (headless/print/RPC).
+			const pushStatus = () => {
+				const setStatus = ctx?.ui?.setStatus;
+				if (typeof setStatus !== "function") return;
+				const theme = ctx.ui.theme;
+				const color = typeof theme?.fg === "function" ? (token: string, text: string) => theme.fg(token, text) : undefined;
+				const model = buildStatuslineModel(cwd, { sessionId });
+				const line = formatStatusline(model, { color });
+				setStatus.call(ctx.ui, STATUS_KEY, line || undefined);
+			};
+			const done = () => {
+				pushStatus();
+				return { content: [{ type: "text", text: transcript.join("\n") }] };
+			};
 
 			emit(`Loop: "${state.task}" (slug=${slug}, maxRounds=${state.maxRounds})`);
 
@@ -525,6 +543,7 @@ export default function (pi: ExtensionAPI) {
 					pid: process.pid,
 					ownerSessionId: sessionId,
 				});
+				pushStatus();
 				const devRun = await runAgent(developer, devContext, cwd, {
 					role: "developer",
 					round,
@@ -556,6 +575,7 @@ export default function (pi: ExtensionAPI) {
 					pid: process.pid,
 					ownerSessionId: sessionId,
 				});
+				pushStatus();
 				if (verifyCmd) {
 					emit(`Round ${round}: verify \`${verifyCmd}\`...`);
 					const v = await runVerify(verifyCmd, cwd, signal);
@@ -584,6 +604,7 @@ export default function (pi: ExtensionAPI) {
 					pid: process.pid,
 					ownerSessionId: sessionId,
 				});
+				pushStatus();
 				const testRun = await runAgent(tester, testerTask, cwd, {
 					role: "tester",
 					round,
@@ -633,6 +654,7 @@ export default function (pi: ExtensionAPI) {
 					pid: process.pid,
 					ownerSessionId: sessionId,
 				});
+				pushStatus();
 				emit(`Round ${round}: ${roundSummary}`);
 
 				// ---- DECIDE ----

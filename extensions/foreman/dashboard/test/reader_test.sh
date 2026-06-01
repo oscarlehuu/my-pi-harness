@@ -174,6 +174,34 @@ try {
   assert.equal(rows[2].summary, "Tests still fail");
   assert.equal(rows[2].live, false);
 
+  // --- statusline (footer) model + format ---
+  // activity.json above is stamped at 12:00:06; treat "now" as right after it so it counts live.
+  const nowMs = Date.parse("2026-05-31T12:00:07.000Z");
+  const slModel = reader.buildStatuslineModel(repo, { sessionId: "sess-owner", now: nowMs });
+  assert.deepEqual(slModel.map((t) => t.slug), [slug], "statusline is scoped to the session's tasks");
+  assert.equal(slModel[0].phase, "developer", "live crew phase comes from fresh activity.json");
+  assert.equal(slModel[0].glyph, "running", "actively-spawning task uses the running glyph");
+  assert.ok(slModel[0].label.length <= 23, "task label is shortened for the footer");
+
+  assert.deepEqual(
+    reader.buildStatuslineModel(repo, { sessionId: "nobody", now: nowMs }),
+    [],
+    "a session with no owned tasks gets an empty statusline",
+  );
+
+  const staleModel = reader.buildStatuslineModel(repo, { sessionId: "sess-owner", now: nowMs + 60000 });
+  assert.equal(staleModel[0].phase, null, "stale activity is not treated as a live agent");
+  assert.equal(staleModel[0].glyph, "idle", "in_progress with stale activity falls back to idle");
+
+  const slLine = reader.formatStatusline(slModel);
+  assert.ok(slLine.startsWith("foreman "), "statusline carries the foreman prefix");
+  assert.ok(slLine.includes(":dev"), "statusline shows the live developer agent");
+  assert.equal(reader.formatStatusline([]), "", "empty model clears the status line");
+  assert.ok(
+    reader.formatStatusline(slModel, { color: (token, text) => `<${token}>${text}</${token}>` }).includes("<accent>"),
+    "format applies the injected colorizer",
+  );
+
   console.log("Foreman dashboard reader tests passed");
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });

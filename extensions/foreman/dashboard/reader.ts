@@ -333,6 +333,106 @@ export function readActivity(cwd: string, slug: string): ForemanActivity | null 
 	}
 }
 
+export type StatuslineGlyph = "running" | "gate" | "escalated" | "done" | "idle";
+
+export interface StatuslineTask {
+	slug: string;
+	label: string;
+	state: string;
+	/** Live crew phase from activity.json when the task is actively running, else null. */
+	phase: "developer" | "verify" | "tester" | null;
+	glyph: StatuslineGlyph;
+}
+
+export interface StatuslineOptions {
+	/** Only include tasks owned by this session. Omit to include all tasks in the repo. */
+	sessionId?: string;
+	/** Activity older than this (ms) is treated as not-live (crashed run). Default 20s. */
+	staleMs?: number;
+	/** "now" injection for deterministic tests. */
+	now?: number;
+}
+
+function shortLabel(task: string, slug: string, max = 22): string {
+	const base = (task || slug).replace(/\s+/g, " ").trim();
+	if (base.length <= max) return base;
+	const clipped = base.slice(0, max);
+	const lastSpace = clipped.lastIndexOf(" ");
+	return `${(lastSpace > 8 ? clipped.slice(0, lastSpace) : clipped).trimEnd()}\u2026`;
+}
+
+function livePhase(phase: ActivityPhase): "developer" | "verify" | "tester" | null {
+	return phase === "developer" || phase === "verify" || phase === "tester" ? phase : null;
+}
+
+/**
+ * Build a compact, newest-first model of this session's foreman tasks for the footer statusline.
+ * Active tasks show the crew agent currently spawning (developer/verify/tester); finished tasks
+ * get a done glyph (green tick at render time). Pure: reads the ledger, no TUI imports.
+ */
+export function buildStatuslineModel(cwd: string, opts: StatuslineOptions = {}): StatuslineTask[] {
+	const staleMs = opts.staleMs ?? 20000;
+	const now = opts.now ?? Date.now();
+	const tasks = listTasks(cwd).filter((t) => (opts.sessionId ? t.ownerSessionId === opts.sessionId : true));
+	return tasks.map((t) => {
+		const activity = readActivity(cwd, t.slug);
+		const fresh = activity ? now - parseTime(activity.updatedAt) <= staleMs : false;
+		const phase = activity && fresh && t.state !== "done" ? livePhase(activity.phase) : null;
+		let glyph: StatuslineGlyph;
+		if (t.state === "done") glyph = "done";
+		else if (t.state === "escalated") glyph = "escalated";
+		else if (t.state === "awaiting_ship" || t.state === "planning") glyph = "gate";
+		else if (phase) glyph = "running";
+		else glyph = "idle";
+		return { slug: t.slug, label: shortLabel(t.task, t.slug), state: t.state, phase, glyph };
+	});
+}
+
+const GLYPHS: Record<StatuslineGlyph, string> = {
+	running: "\u25B8", // ▸
+	gate: "\u25C6", // ◆
+	escalated: "\u26A0", // ⚠
+	done: "\u2713", // ✓
+	idle: "\u00B7", // ·
+};
+
+const GLYPH_COLOR: Record<StatuslineGlyph, string> = {
+	running: "accent",
+	gate: "warning",
+	escalated: "warning",
+	done: "success",
+	idle: "muted",
+};
+
+const PHASE_LABEL: Record<"developer" | "verify" | "tester", string> = {
+	developer: "dev",
+	verify: "verify",
+	tester: "test",
+};
+
+export interface FormatStatuslineOptions {
+	/** Max task segments to show before collapsing the rest into a "+N" suffix. Default 4. */
+	maxTasks?: number;
+	/** Colorizer (token, text) => text. Default identity (plain text, used by tests). */
+	color?: (token: string, text: string) => string;
+}
+
+/** Render the statusline model to a single footer line. Pure; color is injectable for tests. */
+export function formatStatusline(model: StatuslineTask[], opts: FormatStatuslineOptions = {}): string {
+	if (model.length === 0) return "";
+	const maxTasks = opts.maxTasks ?? 4;
+	const color = opts.color ?? ((_token, text) => text);
+	const shown = model.slice(0, maxTasks);
+	const segments = shown.map((t) => {
+		const glyph = color(GLYPH_COLOR[t.glyph], GLYPHS[t.glyph]);
+		const detail = t.phase ? color("muted", `:${PHASE_LABEL[t.phase]}`) : "";
+		return `${glyph} ${t.label}${detail}`;
+	});
+	const hidden = model.length - shown.length;
+	if (hidden > 0) segments.push(color("muted", `+${hidden}`));
+	return `${color("muted", "foreman")} ${segments.join(color("muted", "  "))}`;
+}
+
 /** List transcript JSONL runs, parsed from filenames and sorted chronologically. */
 export function listRuns(cwd: string, slug: string): ForemanRunInfo[] {
 	try {

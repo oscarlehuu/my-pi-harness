@@ -217,7 +217,6 @@ async function runAgent(agent: AgentDef, task: string, cwd: string, options: Run
 	const writeTranscript = makeTranscriptWriter(options.transcriptPath);
 	const appendTranscript = (event: Record<string, unknown>) => {
 		writeTranscript(event);
-		options.onActivity?.();
 	};
 	appendTranscript({
 		kind: "agent_start",
@@ -288,6 +287,7 @@ async function runAgent(agent: AgentDef, task: string, cwd: string, options: Run
 			} catch {
 				return;
 			}
+			options.onActivity?.();
 
 			if (ev.type === "message_start" && ev.message?.role === "assistant") {
 				currentAssistantTextCaptured = false;

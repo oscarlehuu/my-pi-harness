@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-01T10:25:13.944Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "3de1cece-c736-4b91-bfae-18d6c765244f",
+  "successState": "success",
+  "summary": "I'll investigate the actual changes to verify they fulfill the task intent.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll investigate the actual changes to verify they fulfill the task intent.\nNow let me verify the test file changes and confirm the activity wiring placement is correct.\nThe implementation is genuine and correct. Verification:\n\n**index.ts** (`onLine` handler, ~line 257):\n```ts\ntry {\n    ev = JSON.parse(line);\n} catch {\n    return;          // malformed lines do NOT fire activity ✓\n}\noptions.onActivity?.();   // fires on EVERY parsed event, before type filtering ✓\n```\n- Single centralized call site (text_delta branch now only writes transcript, no longer fires activity) ✓\n- `maxTimer = setTimeout(abortForTimeout, maxMs)` is independent of activity; `recordPlannerActivity` only touches the idle path ✓\n- onActivity stays optional, only passed on the planner path ✓\n\n**planner.ts**: `DEFAULT_PLANNER_IDLE_MS = 90_000`, max stays 300_000, clamps and legacy alias preserved; `decidePlannerTimeout` semantics unchanged (max precedence) ✓\n\n**Test**: asserts default idle 90_000, env overrides, legacy alias, clamps, decidePlannerTimeout semantics, AND greps index.ts to confirm `onActivity` fires after parse / before type-branching with exactly one call site ✓\n\nNo cheats (no hardcoding, tests assert real behavior). All suites pass. Task intent fully satisfied.\n\nVERDICT: PASS"
+}

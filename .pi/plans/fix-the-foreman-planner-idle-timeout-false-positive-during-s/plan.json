@@ -1,0 +1,32 @@
+{
+  "summary": "Fix the Foreman planner idle-timeout false-positive during silent reasoning. Decouple the idle activity heartbeat from transcript writing by firing options.onActivity?.() once per successfully-parsed stream event at the top of runAgent's onLine handler in extensions/foreman/index.ts, so reasoning/thinking deltas (and every other event type) count as 'the model is alive'. As defense-in-depth, raise the default idle floor from 45000ms to 90000ms in extensions/foreman/planner.ts. The absolute max-runtime backstop (300000ms) and decidePlannerTimeout precedence are unchanged; fallback-to-template on real timeout/error is preserved.",
+  "steps": [
+    "Read runAgent() in extensions/foreman/index.ts (onLine ~283-348, appendTranscript ~218-221) and the planner timeout wiring (~615-650) to confirm onActivity flows only through the planner path and the maxTimer is activity-independent.",
+    "In onLine, immediately after the line JSON-parses into ev (after the try/catch that returns on malformed lines), add options.onActivity?.() so a heartbeat fires once per parsed event regardless of type; malformed lines still skip it.",
+    "Remove the onActivity?.() side-effect from appendTranscript so the heartbeat lives in one clear place (writeTranscript telemetry stays byte-for-byte identical); keep all appendTranscript transcript writes exactly as-is.",
+    "In extensions/foreman/planner.ts, change DEFAULT_PLANNER_IDLE_MS from 45_000 to 90_000; leave FOREMAN_PLANNER_IDLE_MS / legacy FOREMAN_PLANNER_TIMEOUT_MS aliasing, MIN_PLANNER_IDLE_MS clamp, DEFAULT_PLANNER_MAX_MS, and decidePlannerTimeout untouched.",
+    "Update extensions/foreman/test/planner_timeout_test.sh: change the default-timeouts assertion to expect idleMs 90_000 (max 300_000); keep override/alias/clamp and decidePlannerTimeout precedence assertions.",
+    "Add a grep-based assertion (in the timeout test or a small helper step) that index.ts invokes onActivity inside the onLine handler path (not only via appendTranscript), to lock in the heartbeat wiring.",
+    "Run the full resolved verify command so every existing suite passes; record the handoff noting live Gate 1 validation is required (founder will observe the planner surviving its long final-reasoning burst and emitting a real PLAN-JSON)."
+  ],
+  "filesLikely": [
+    "extensions/foreman/index.ts",
+    "extensions/foreman/planner.ts",
+    "extensions/foreman/test/planner_timeout_test.sh"
+  ],
+  "risks": [
+    "Heartbeat-on-every-event is intentionally broad; the absolute maxTimer (default 300000ms, activity-independent) remains the real ceiling and must still abort a genuinely-stuck planner — verify the maxTimer wiring is not touched.",
+    "If the onActivity call in appendTranscript is kept alongside the new onLine call, the heartbeat double-fires for transcribed events; this is idempotent (just resets lastActivityAt) and harmless, but the plan prefers a single call at the top of onLine for clarity.",
+    "Only the planner passes onActivity; must confirm developer/tester/reviewer runAgent calls remain behaviorally identical (firing onActivity is a no-op when undefined).",
+    "Unit/integration coverage proves the state machine and default values; full validation of the silent-reasoning fix is integration-level and requires a live planner run at the next Gate 1, which the founder will observe (planner should survive its long final-reasoning burst and emit a real ---PLAN-JSON---).",
+    "Strict blast-radius: no changes to model/reasoning level, decidePlannerTimeout precedence, PLAN-JSON capture, gates.ts, guard.ts, reviewer.ts, ship logic, dashboard, or crew/*.md."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    }
+  ]
+}

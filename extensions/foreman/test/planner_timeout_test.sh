@@ -8,9 +8,27 @@ export ROOT_DIR
 
 node --input-type=module <<'NODE'
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const planner = await import(pathToFileURL(`${process.env.ROOT_DIR}/extensions/foreman/planner.ts`).href);
+const indexSource = readFileSync(`${process.env.ROOT_DIR}/extensions/foreman/index.ts`, "utf8");
+const onLineStart = indexSource.indexOf("\t\tconst onLine = (line: string) => {");
+assert.notEqual(onLineStart, -1, "runAgent has an onLine stream handler");
+const onLineEnd = indexSource.indexOf("\t\t};\n\t\tproc.stdout.on", onLineStart);
+assert.notEqual(onLineEnd, -1, "onLine handler boundaries are recognizable");
+const onLineBody = indexSource.slice(onLineStart, onLineEnd);
+const parseIndex = onLineBody.indexOf("ev = JSON.parse(line);");
+const activityIndex = onLineBody.indexOf("options.onActivity?.();");
+const firstTypedBranchIndex = onLineBody.indexOf("if (ev.type === \"message_start\"");
+assert.ok(parseIndex !== -1, "onLine parses JSON stream events");
+assert.ok(activityIndex > parseIndex, "onLine fires activity only after a stream event parses");
+assert.ok(activityIndex < firstTypedBranchIndex, "onLine fires activity before event-type filtering/transcript writing");
+assert.equal(
+  (indexSource.match(/options\.onActivity\?\.\(\);/g) ?? []).length,
+  1,
+  "activity heartbeat is centralized to one parsed-event call site",
+);
 
 assert.deepEqual(
   planner.decidePlannerTimeout({ now: 11_000, startedAt: 0, lastActivityAt: 5_000, idleMs: 5_000, maxMs: 30_000 }),
@@ -33,7 +51,7 @@ assert.deepEqual(
   "when both idle and max are exceeded, max has precedence",
 );
 
-assert.deepEqual(planner.resolvePlannerTimeouts({}), { idleMs: 45_000, maxMs: 300_000 }, "defaults are 45s idle / 5m max");
+assert.deepEqual(planner.resolvePlannerTimeouts({}), { idleMs: 90_000, maxMs: 300_000 }, "defaults are 90s idle / 5m max");
 assert.deepEqual(
   planner.resolvePlannerTimeouts({ FOREMAN_PLANNER_IDLE_MS: "12000", FOREMAN_PLANNER_MAX_MS: "120000" }),
   { idleMs: 12_000, maxMs: 120_000 },

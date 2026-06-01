@@ -64,7 +64,7 @@ export interface ManifestDecision {
 
 const VALID_KINDS = new Set<GateKind>(["command", "judge", "action"]);
 const VALID_STAGES = new Set<GateStage>(["per-round", "pre-ship", "release"]);
-const DEFAULT_PLANNER_IDLE_MS = 45_000;
+const DEFAULT_PLANNER_IDLE_MS = 90_000;
 const DEFAULT_PLANNER_MAX_MS = 300_000;
 const MIN_PLANNER_IDLE_MS = 1_000;
 

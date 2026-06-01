@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-01T10:01:26.835Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "89db61e9-dcc9-4a96-b171-b67b0494e665",
+  "successState": "success",
+  "summary": "Both files match the task intent precisely.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && grep -q -- \"---PLAN-JSON---\" extensions/foreman/crew/planner.md && grep -q -- \"---END-PLAN-JSON---\" extensions/foreman/crew/planner.md && grep -qiE \"FINAL message MUST|recon budget|6.10 tool calls|imperfect PLAN-JSON|narration without the block\" extensions/foreman/crew/planner.md && grep -q -- \"---PLAN-JSON---\" extensions/foreman/index.ts && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner helper tests passed\nForeman planner timeout helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "Both files match the task intent precisely.\n\n**planner.md**: model line unchanged (`cliproxy/claude-opus-4-8:xhigh`), markers intact, HARD OUTPUT CONTRACT placed near top AND before the PLAN-JSON template, RECON BUDGET (~6-10 tool calls) added, minimal-narration instruction added, read-only posture and gate schema preserved.\n\n**index.ts**: `plannerTaskFor()` got exactly the reinforcement line (\"Keep recon tight (~6-10 tool calls)... FINAL message MUST end with exactly one ---PLAN-JSON---...\"). No other code (draftPlannerPlan, timeout, runAgent, parser) touched.\n\nAll 8 test suites pass; grep contract assertions satisfied. No cheats — only prompt text was changed.\n\nNote: real validation requires a live planner run at the next Gate 1 (founder-observed), since model output discipline can't be unit-tested.\n\nVERDICT: PASS"
+}

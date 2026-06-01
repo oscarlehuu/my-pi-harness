@@ -546,6 +546,7 @@ function plannerTaskFor(context: {
 		gateLines,
 		"",
 		"Return a concise plan and exactly one PLAN-JSON block with keys summary, steps, filesLikely, risks, proposedGates. Propose only commands you verified actually exist in this repo; if no .pi/foreman.json exists and no real command is detectable, proposedGates must be empty. Do not copy the legacy verify command into proposedGates unless you verified it is a real repo command. If .pi/foreman.json exists, reflect existing gates and do not propose overwriting it.",
+		"Keep recon tight (~6-10 tool calls). Your FINAL message MUST end with exactly one ---PLAN-JSON--- ... ---END-PLAN-JSON--- block containing summary, steps, filesLikely, risks, proposedGates — even if you must note assumptions in risks. Narration without the block is a failure.",
 	].join("\n");
 }
 

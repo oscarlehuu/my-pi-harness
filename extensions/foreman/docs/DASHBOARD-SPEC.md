@@ -215,6 +215,10 @@ phase/round's transcript as the loop advances and auto-tails new output (press `
 after scrolling up). That removes the old "Esc and re-enter to see updates" friction. The full
 developer/tester/verify drill-down still lives in the ctrl+b dashboard.
 
+**Toggle to close.** Ctrl+B and Ctrl+F also *close* the dashboard (not just Esc), so the keys that
+open it dismiss it too. While the component is focused the editor's shortcut handler doesn't run, so
+the component matches the raw control bytes (`\x02` / `\x06`) in `handleInput` and calls `done()`.
+
 ---
 
 ## What gets built (the only new code)

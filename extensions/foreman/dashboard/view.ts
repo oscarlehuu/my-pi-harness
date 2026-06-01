@@ -206,6 +206,13 @@ export class ForemanDashboard extends Container implements Focusable {
 	}
 
 	handleInput(data: string): void {
+		// The same keys that open the dashboard also close it (toggle), so you don't reach for Esc.
+		// While the component is focused the editor's shortcut handler doesn't run, so we match the raw
+		// control bytes the terminal sends: Ctrl+B = \x02, Ctrl+F = \x06.
+		if (data === "\x02" || data === "\x06") {
+			this.close();
+			return;
+		}
 		const view = this.currentView();
 		if (view.type === "picker") {
 			this.handlePickerInput(data);
@@ -424,7 +431,7 @@ export class ForemanDashboard extends Container implements Focusable {
 		];
 		const footer = [
 			this.separator(width),
-			this.theme.fg("dim", "↑/↓ select   →/Enter open task   Esc minimize"),
+			this.theme.fg("dim", "↑/↓ select   →/Enter open task   Esc / Ctrl+B / Ctrl+F close"),
 		];
 		const bodyHeight = Math.max(1, height - header.length - footer.length);
 		const body: string[] = [];

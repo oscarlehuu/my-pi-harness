@@ -1,0 +1,9 @@
+{
+  "name": "codex-image",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Codex image generation/edit tools for pi via ChatGPT/Codex subscription OAuth.",
+  "pi": {
+    "extensions": ["generate/index.ts", "edit/index.ts"]
+  }
+}

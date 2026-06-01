@@ -1,0 +1,7 @@
+{
+  "name": "antigravity",
+  "private": true,
+  "pi": {
+    "extensions": ["imagegen/index.ts", "imageedit/index.ts"]
+  }
+}

@@ -1,0 +1,466 @@
+/**
+ * Grok Imagine client — reverse-engineered from the authorized `grok` CLI.
+ *
+ * The CLI's `/imagine` and `/imagine-video` features hit the same
+ * subscription-backed proxy used by search (`cli-chat-proxy.grok.com/v1`) with
+ * the shared `grok login` bearer token. Image generation/editing are synchronous
+ * JSON POSTs returning base64 assets; video generation is async (`request_id` +
+ * polling) and returns a signed mp4 URL that we download to disk.
+ *
+ * Important wire detail: unlike search, Imagine requests do NOT send
+ * `x-grok-model-override`; they set the model in the JSON body only.
+ */
+
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { type GrokAuth, buildAuthHeaders, resolveGrokAuth } from "./grokAuth.ts";
+
+export const GROK_IMAGE_MODEL = "grok-imagine-image-quality";
+export const GROK_VIDEO_MODEL = "grok-imagine-video";
+
+const DEFAULT_IMAGE_PREFIX = "grok-image";
+const DEFAULT_VIDEO_PREFIX = "grok-video";
+const MAX_ATTEMPTS = Number(process.env.PI_IMAGINE_MAX_ATTEMPTS ?? 4);
+const BASE_BACKOFF_MS = Number(process.env.PI_IMAGINE_BACKOFF_MS ?? 1500);
+const VIDEO_DEADLINE_MS = Number(process.env.PI_IMAGINE_VIDEO_DEADLINE_MS ?? 300000);
+const VIDEO_POLL_MS = Number(process.env.PI_IMAGINE_VIDEO_POLL_MS ?? 5000);
+
+export interface ImagineProgress {
+	phase: "requesting" | "retrying" | "polling" | "downloading";
+	attempt?: number;
+	status?: string;
+	progress?: number;
+	requestId?: string;
+}
+
+export interface GeneratedImageAsset {
+	b64Json: string;
+	bytes: Buffer;
+	mimeType: string;
+	ext: string;
+	path: string;
+}
+
+export interface ImageGenerationResult {
+	images: GeneratedImageAsset[];
+	usage?: unknown;
+	model: typeof GROK_IMAGE_MODEL;
+	mode: GrokAuth["mode"];
+}
+
+export interface GenerateImageOptions {
+	prompt: string;
+	n?: number;
+	aspectRatio?: string;
+	resolution?: "1k" | "2k" | string;
+	output?: string;
+	/** Base directory for resolving relative local image paths. */
+	cwd?: string;
+	signal?: AbortSignal;
+	onProgress?: (progress: ImagineProgress) => void;
+}
+
+export interface EditImageOptions extends GenerateImageOptions {
+	image: string | string[];
+}
+
+export interface VideoGenerationResult {
+	requestId: string;
+	path: string;
+	url: string;
+	duration?: number;
+	status: "done";
+	model: typeof GROK_VIDEO_MODEL;
+	mode: GrokAuth["mode"];
+}
+
+export interface GenerateVideoOptions {
+	prompt: string;
+	image?: string;
+	duration?: number;
+	aspectRatio?: string;
+	resolution?: "480p" | "720p" | string;
+	output?: string;
+	/** Base directory for resolving a relative local input image path. */
+	cwd?: string;
+	signal?: AbortSignal;
+	onProgress?: (progress: ImagineProgress) => void;
+}
+
+interface ImageResponse {
+	data?: Array<{ b64_json?: string; mime_type?: string }>;
+	usage?: unknown;
+}
+
+interface VideoCreateResponse {
+	request_id?: string;
+}
+
+interface VideoPollResponse {
+	status?: "pending" | "processing" | "done" | "failed" | "expired" | string;
+	progress?: number;
+	video?: { url?: string; duration?: number };
+	error?: unknown;
+	message?: string;
+}
+
+class TransientImagineError extends Error {}
+
+const TRANSIENT_PATTERNS = [
+	/temporarily unavailable/i,
+	/too many requests/i,
+	/resource has been exhausted/i,
+	/rate.?limit/i,
+	/timeout/i,
+	/\b(429|502|503|504)\b/,
+];
+
+function isTransientMessage(msg: string): boolean {
+	return TRANSIENT_PATTERNS.some((re) => re.test(msg));
+}
+
+function outputDir(): string {
+	return expandHome(process.env.PI_IMAGINE_OUTPUT_DIR || path.join(os.homedir(), ".pi", ".generated"));
+}
+
+function expandHome(p: string): string {
+	if (p === "~") return os.homedir();
+	if (p.startsWith(`~${path.sep}`)) return path.join(os.homedir(), p.slice(2));
+	return p;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) return reject(new DOMException("Aborted", "AbortError"));
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(new DOMException("Aborted", "AbortError"));
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
+/**
+ * Resolve an image reference for Grok Imagine. data: and http(s) URLs pass
+ * through untouched; local filesystem paths are read and encoded as data URIs.
+ */
+export async function resolveImageRef(pathOrDataUriOrUrl: string, cwd = process.cwd()): Promise<string> {
+	const ref = pathOrDataUriOrUrl.trim();
+	if (!ref) throw new Error("image reference is empty");
+	if (/^data:[^,]+,/i.test(ref)) return ref;
+	if (/^https?:\/\//i.test(ref)) return ref;
+
+	const filePath = path.isAbsolute(expandHome(ref)) ? expandHome(ref) : path.resolve(cwd, expandHome(ref));
+	const bytes = await fs.readFile(filePath);
+	const mimeType = inferImageMimeType(filePath, bytes);
+	return `data:${mimeType};base64,${Buffer.from(bytes).toString("base64")}`;
+}
+
+/** Save generated bytes to the configured output directory. */
+export async function saveAsset(bytes: Uint8Array, ext: string, name?: string): Promise<string> {
+	const dir = outputDir();
+	await fs.mkdir(dir, { recursive: true });
+	const normalizedExt = normalizeExt(ext);
+	const prefix = normalizedExt === "mp4" ? DEFAULT_VIDEO_PREFIX : DEFAULT_IMAGE_PREFIX;
+	const filename = name ? sanitizeOutputName(name, normalizedExt) : defaultName(prefix, normalizedExt);
+	const dest = path.join(dir, filename);
+	await fs.writeFile(dest, bytes);
+	return dest;
+}
+
+/** Download a generated asset URL to disk. */
+export async function downloadToFile(url: string, dest: string, signal?: AbortSignal): Promise<string> {
+	const response = await fetch(url, { signal });
+	if (!response.ok) {
+		const detail = await safeReadError(response);
+		throw new Error(`download failed: ${response.status} ${response.statusText}${detail ? `: ${detail}` : ""}`);
+	}
+	const bytes = Buffer.from(await response.arrayBuffer());
+	await fs.mkdir(path.dirname(dest), { recursive: true });
+	await fs.writeFile(dest, bytes);
+	return dest;
+}
+
+export async function generateImage(opts: GenerateImageOptions): Promise<ImageGenerationResult> {
+	const prompt = opts.prompt?.trim();
+	if (!prompt) throw new Error("prompt is required");
+	const n = normalizeCount(opts.n);
+	const auth = resolveGrokAuth("subscription");
+	const body = {
+		model: GROK_IMAGE_MODEL,
+		prompt,
+		n,
+		response_format: "b64_json",
+		...(opts.aspectRatio ? { aspect_ratio: opts.aspectRatio } : {}),
+		...(opts.resolution ? { resolution: opts.resolution } : {}),
+	};
+
+	const response = await fetchJsonWithRetry<ImageResponse>(auth, "/images/generations", {
+		method: "POST",
+		body,
+		signal: opts.signal,
+		onProgress: opts.onProgress,
+	});
+	return saveImageResponse(response, opts.output, auth.mode);
+}
+
+export async function editImage(opts: EditImageOptions): Promise<ImageGenerationResult> {
+	const prompt = opts.prompt?.trim();
+	if (!prompt) throw new Error("prompt is required");
+	const refs = Array.isArray(opts.image) ? opts.image : [opts.image];
+	if (!refs.length) throw new Error("at least one image is required");
+	if (refs.length > 3) throw new Error("grok-image-edit accepts at most 3 input images");
+	const imageRefs = await Promise.all(refs.map((ref) => resolveImageRef(ref, opts.cwd)));
+	const n = opts.n === undefined ? undefined : normalizeCount(opts.n);
+	const auth = resolveGrokAuth("subscription");
+	const body = {
+		model: GROK_IMAGE_MODEL,
+		prompt,
+		image_url: imageRefs.length === 1 ? imageRefs[0] : imageRefs,
+		response_format: "b64_json",
+		...(n !== undefined ? { n } : {}),
+		...(opts.aspectRatio ? { aspect_ratio: opts.aspectRatio } : {}),
+	};
+
+	const response = await fetchJsonWithRetry<ImageResponse>(auth, "/images/edits", {
+		method: "POST",
+		body,
+		signal: opts.signal,
+		onProgress: opts.onProgress,
+	});
+	return saveImageResponse(response, opts.output, auth.mode);
+}
+
+export async function generateVideo(opts: GenerateVideoOptions): Promise<VideoGenerationResult> {
+	const prompt = opts.prompt?.trim();
+	if (!prompt) throw new Error("prompt is required");
+	const auth = resolveGrokAuth("subscription");
+	const image = opts.image ? { url: await resolveImageRef(opts.image, opts.cwd) } : undefined;
+	const body = {
+		model: GROK_VIDEO_MODEL,
+		prompt,
+		...(opts.duration !== undefined ? { duration: normalizeDuration(opts.duration) } : {}),
+		...(opts.aspectRatio ? { aspect_ratio: opts.aspectRatio } : {}),
+		...(opts.resolution ? { resolution: opts.resolution } : {}),
+		...(image ? { image } : {}),
+	};
+
+	const created = await fetchJsonWithRetry<VideoCreateResponse>(auth, "/videos/generations", {
+		method: "POST",
+		body,
+		signal: opts.signal,
+		onProgress: opts.onProgress,
+	});
+	const requestId = created.request_id;
+	if (!requestId) throw new Error(`Grok video response missing request_id: ${JSON.stringify(created).slice(0, 400)}`);
+
+	const poll = await pollVideo(auth, requestId, opts.signal, opts.onProgress);
+	const url = poll.video?.url;
+	if (!url) throw new Error(`Grok video completed without a video URL: ${JSON.stringify(poll).slice(0, 400)}`);
+
+	opts.onProgress?.({ phase: "downloading", requestId, status: "done", progress: 100 });
+	const dest = path.join(outputDir(), sanitizeOutputName(opts.output || defaultName(DEFAULT_VIDEO_PREFIX, "mp4"), "mp4"));
+	await downloadToFile(url, dest, opts.signal);
+
+	return {
+		requestId,
+		path: dest,
+		url,
+		duration: poll.video?.duration,
+		status: "done",
+		model: GROK_VIDEO_MODEL,
+		mode: auth.mode,
+	};
+}
+
+async function saveImageResponse(response: ImageResponse, output: string | undefined, mode: GrokAuth["mode"]): Promise<ImageGenerationResult> {
+	const data = response.data ?? [];
+	if (!data.length) throw new Error(`Grok image response returned no data: ${JSON.stringify(response).slice(0, 400)}`);
+	const images: GeneratedImageAsset[] = [];
+	for (let i = 0; i < data.length; i++) {
+		const item = data[i];
+		if (!item.b64_json) throw new Error(`Grok image item ${i + 1} missing b64_json`);
+		const mimeType = item.mime_type || "image/jpeg";
+		const ext = extFromMime(mimeType);
+		const bytes = Buffer.from(item.b64_json, "base64");
+		const name = output ? indexedName(output, i, data.length, ext) : undefined;
+		const filePath = await saveAsset(bytes, ext, name);
+		images.push({ b64Json: item.b64_json, bytes, mimeType, ext, path: filePath });
+	}
+	return { images, usage: response.usage, model: GROK_IMAGE_MODEL, mode };
+}
+
+async function pollVideo(
+	auth: GrokAuth,
+	requestId: string,
+	signal?: AbortSignal,
+	onProgress?: (progress: ImagineProgress) => void,
+): Promise<VideoPollResponse> {
+	const deadline = VIDEO_DEADLINE_MS > 0 ? Date.now() + VIDEO_DEADLINE_MS : Number.POSITIVE_INFINITY;
+	while (true) {
+		if (Date.now() > deadline) throw new Error(`Grok video timed out after ${VIDEO_DEADLINE_MS}ms.`);
+		const response = await fetchJsonWithRetry<VideoPollResponse>(auth, `/videos/${encodeURIComponent(requestId)}`, {
+			method: "GET",
+			signal,
+			onProgress,
+		});
+		const status = response.status || "pending";
+		onProgress?.({ phase: "polling", requestId, status, progress: response.progress });
+		if (status === "done") return response;
+		if (status === "failed" || status === "expired") {
+			const msg = response.message || JSON.stringify(response.error ?? response).slice(0, 400);
+			throw new Error(`Grok video ${status}: ${msg}`);
+		}
+		const remaining = deadline - Date.now();
+		await sleep(Math.min(VIDEO_POLL_MS, Math.max(1, remaining)), signal);
+	}
+}
+
+async function fetchJsonWithRetry<T>(
+	auth: GrokAuth,
+	endpoint: string,
+	opts: {
+		method: "GET" | "POST";
+		body?: unknown;
+		signal?: AbortSignal;
+		onProgress?: (progress: ImagineProgress) => void;
+	},
+): Promise<T> {
+	const attempts = Math.max(1, MAX_ATTEMPTS);
+	let lastErr: Error | undefined;
+	for (let attempt = 1; attempt <= attempts; attempt++) {
+		try {
+			opts.onProgress?.({ phase: "requesting", attempt });
+			const response = await fetch(`${auth.baseUrl}${endpoint}`, {
+				method: opts.method,
+				headers: buildAuthHeaders(auth),
+				...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+				signal: opts.signal,
+			});
+			if (!response.ok) {
+				const detail = await safeReadError(response);
+				const msg = `Grok Imagine proxy returned ${response.status} ${response.statusText}${detail ? `: ${detail}` : ""}`;
+				if (response.status === 429 || response.status >= 500 || isTransientMessage(detail)) {
+					throw new TransientImagineError(msg);
+				}
+				throw new Error(msg);
+			}
+			return (await response.json()) as T;
+		} catch (err) {
+			if ((err as Error)?.name === "AbortError") throw err;
+			lastErr = err as Error;
+			const transient = err instanceof TransientImagineError || isTransientMessage(lastErr.message);
+			if (!transient || attempt === attempts) throw lastErr;
+			opts.onProgress?.({ phase: "retrying", attempt });
+			const delay = BASE_BACKOFF_MS * 2 ** (attempt - 1) + Math.floor(Math.random() * 400);
+			await sleep(delay, opts.signal);
+		}
+	}
+	throw lastErr ?? new Error("Grok Imagine proxy request failed");
+}
+
+async function safeReadError(response: Response): Promise<string> {
+	try {
+		const raw = await response.text();
+		try {
+			const parsed = JSON.parse(raw);
+			const err = parsed.error || parsed.message;
+			return typeof err === "string" ? err : JSON.stringify(err || parsed).slice(0, 400);
+		} catch {
+			return raw.slice(0, 400);
+		}
+	} catch {
+		return "";
+	}
+}
+
+function normalizeCount(n: number | undefined): number {
+	const value = n ?? 1;
+	if (!Number.isInteger(value) || value < 1 || value > 10) throw new Error("n must be an integer from 1 to 10");
+	return value;
+}
+
+function normalizeDuration(duration: number): number {
+	if (!Number.isFinite(duration) || duration < 1 || duration > 15) throw new Error("duration must be from 1 to 15 seconds");
+	return Math.round(duration);
+}
+
+function normalizeExt(ext: string): string {
+	return ext.replace(/^\.+/, "").toLowerCase() || "bin";
+}
+
+function sanitizeOutputName(name: string, ext: string): string {
+	const base = path.basename(name.trim() || defaultName(DEFAULT_IMAGE_PREFIX, ext));
+	const safe = base.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || defaultName(DEFAULT_IMAGE_PREFIX, ext);
+	const withoutExt = safe.replace(/\.[^.]*$/, "");
+	return `${withoutExt || defaultName(DEFAULT_IMAGE_PREFIX, ext)}.${normalizeExt(ext)}`;
+}
+
+function indexedName(name: string, index: number, total: number, ext: string): string {
+	const sanitized = sanitizeOutputName(name, ext);
+	if (total <= 1) return sanitized;
+	const stem = sanitized.replace(/\.[^.]*$/, "");
+	return `${stem}-${index + 1}.${normalizeExt(ext)}`;
+}
+
+function defaultName(prefix: string, ext: string): string {
+	const ts = new Date().toISOString().replace(/[:.]/g, "-");
+	const rand = Math.random().toString(36).slice(2, 8);
+	return `${prefix}-${ts}-${rand}.${normalizeExt(ext)}`;
+}
+
+function extFromMime(mimeType: string): string {
+	const normalized = mimeType.split(";")[0].trim().toLowerCase();
+	switch (normalized) {
+		case "image/jpeg":
+		case "image/jpg":
+			return "jpg";
+		case "image/png":
+			return "png";
+		case "image/webp":
+			return "webp";
+		case "image/gif":
+			return "gif";
+		case "video/mp4":
+			return "mp4";
+		default:
+			return normalized.split("/").pop()?.replace(/[^a-z0-9]/g, "") || "bin";
+	}
+}
+
+function inferImageMimeType(filePath: string, bytes: Uint8Array): string {
+	if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+	if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+	if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return "image/gif";
+	if (
+		bytes[0] === 0x52 &&
+		bytes[1] === 0x49 &&
+		bytes[2] === 0x46 &&
+		bytes[3] === 0x46 &&
+		bytes[8] === 0x57 &&
+		bytes[9] === 0x45 &&
+		bytes[10] === 0x42 &&
+		bytes[11] === 0x50
+	) {
+		return "image/webp";
+	}
+
+	switch (path.extname(filePath).toLowerCase()) {
+		case ".jpg":
+		case ".jpeg":
+			return "image/jpeg";
+		case ".png":
+			return "image/png";
+		case ".gif":
+			return "image/gif";
+		case ".webp":
+			return "image/webp";
+		default:
+			throw new Error(`unsupported image file type for ${filePath}; expected jpg, png, gif, or webp`);
+	}
+}

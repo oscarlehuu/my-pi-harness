@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-06-01T05:45:09.269Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "208e71a0-7ff9-4ea0-a667-5753eb83debe",
+  "summary": "Added a pure Foreman gate pipeline engine and wired per-round command gates into the orchestrator while preserving legacy verifyCommand behavior.",
+  "filesChanged": [
+    "extensions/foreman/gates.ts - new gate data model, loader, selectors, and command gate runner",
+    "extensions/foreman/index.ts - uses loaded gates for per-round verification and plan/failure reporting",
+    "extensions/foreman/test/gates_test.sh - headless tests for gate loading and command execution"
+  ],
+  "howToVerify": "bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+  "raw": "## Completed\nImplemented generic Foreman gate pipeline engine with legacy `verifyCommand` compatibility and per-round command gate execution.\n\n## Files Changed\n- `extensions/foreman/gates.ts` - new pure gate model/loader/selectors/command runner.\n- `extensions/foreman/index.ts` - loads gates once, runs per-round command gates, reports gate failures to developer, updates plan text, adds pre-ship TODO.\n- `extensions/foreman/test/gates_test.sh` - headless unit coverage for loading, fallback, malformed config, selectors, and command runner.\n\n## How To Verify\n`bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh`\n\n## Notes\nVerified successfully with the command above. `runCommandGates` deliberately runs all matching command gates in order to collect diagnostics.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n\n---DEV-JSON---\n{\n  \"summary\": \"Added a pure Foreman gate pipeline engine and wired per-round command gates into the orchestrator while preserving legacy verifyCommand behavior.\",\n  \"filesChanged\": [\n    \"extensions/foreman/gates.ts - new gate data model, loader, selectors, and command gate runner\",\n    \"extensions/foreman/index.ts - uses loaded gates for per-round verification and plan/failure reporting\",\n    \"extensions/foreman/test/gates_test.sh - headless tests for gate loading and command execution\"\n  ],\n  \"howToVerify\": \"bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh\"\n}\n---END-DEV-JSON---"
+}

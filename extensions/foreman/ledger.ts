@@ -16,12 +16,16 @@ import { createHash } from "node:crypto";
 
 export type SuccessState = "success" | "partial" | "blocked" | "fail";
 export type ActivityPhase = "developer" | "verify" | "tester" | "idle";
+/** Which implementer drives the round. 'frontend' routes to the ui-developer (with model fallback). */
+export type Track = "backend" | "frontend";
 
 export interface LedgerState {
 	task: string;
 	slug: string;
 	state: "planning" | "in_progress" | "awaiting_ship" | "done" | "escalated";
 	workingDirectory: string;
+	/** Implementation track: 'backend' (developer) or 'frontend' (ui-developer). Defaults to backend. */
+	track?: Track;
 	/** Session that created/owns this task. Lets resume target THIS session's task in a shared repo. */
 	ownerSessionId?: string;
 	verifyCommand?: string;
@@ -210,6 +214,7 @@ export function initLedger(
 	maxRounds: number,
 	verifyCommand?: string,
 	ownerSessionId?: string,
+	track: Track = "backend",
 ): LedgerState {
 	ensureGitignore(workingDir);
 	const slug = slugify(task);
@@ -225,6 +230,7 @@ export function initLedger(
 		slug,
 		state: "planning",
 		workingDirectory: workingDir,
+		track,
 		ownerSessionId,
 		verifyCommand,
 		round: 0,

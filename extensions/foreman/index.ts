@@ -21,6 +21,7 @@ import {
 	type Handoff,
 	type LedgerState,
 	type SuccessState,
+	type Track,
 	appendLog,
 	configureMirror,
 	initLedger,
@@ -36,6 +37,17 @@ import {
 } from "./ledger.ts";
 import { ForemanDashboard } from "./dashboard/view.ts";
 import { buildStatuslineModel, formatStatusline } from "./dashboard/reader.ts";
+import { devFallbackReason, workingTreeSnapshot } from "./fallback.ts";
+import {
+	type CommandGateResult,
+	type Gate,
+	gatesForStage,
+	loadGates,
+	runCommandGates,
+} from "./gates.ts";
+
+// Stronger model the frontend track falls back to when Gemini fails to drive the tools.
+const UI_FALLBACK_MODEL = "cliproxy/claude-opus-4-8:xhigh";
 
 // Durable out-of-tree ledger mirror: survives `git clean`/reset/crash inside any target repo.
 // Resolve the location from pi's agent dir and publish it via env so the ledger module finds it even
@@ -162,23 +174,6 @@ function transcriptFilePath(cwd: string, slug: string, role: AgentRole, round: n
 	fs.mkdirSync(path.dirname(fpath), { recursive: true });
 	fs.writeFileSync(fpath, "", { flag: "a" });
 	return fpath;
-}
-
-/** Run the verify command directly. Exit code is GROUND TRUTH for pass/fail (decision B). */
-function runVerify(command: string, cwd: string, signal?: AbortSignal): Promise<{ exitCode: number; output: string }> {
-	return new Promise((resolve) => {
-		const proc = spawn(command, { cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] });
-		let output = "";
-		proc.stdout.on("data", (d) => {
-			output += d.toString();
-		});
-		proc.stderr.on("data", (d) => {
-			output += d.toString();
-		});
-		proc.on("close", (code) => resolve({ exitCode: code ?? 0, output: output.slice(-8000) }));
-		proc.on("error", (e) => resolve({ exitCode: 1, output: String(e) }));
-		if (signal) signal.addEventListener("abort", () => proc.kill("SIGTERM"));
-	});
 }
 
 /** Spawn one agent subprocess, collect final text output. Append-only system prompt (quota-safe). */
@@ -369,10 +364,24 @@ function parseVerdict(text: string): { successState: SuccessState; parsedFrom: s
 	return { successState: "blocked", parsedFrom: "no-verdict-token" };
 }
 
+function commandGateLabel(gate: Gate): string {
+	return gate.command ? `${gate.name} (\`${gate.command}\`)` : gate.name;
+}
+
+function formatCommandGateResults(results: CommandGateResult[], outputCapPerGate = 1500): string {
+	return results
+		.map((result) => {
+			const output = result.output.trim() ? result.output.slice(-outputCapPerGate) : "(no output)";
+			return [`[${result.name}] \`${result.command}\``, `Exit code: ${result.exitCode}`, "Output:", output].join("\n");
+		})
+		.join("\n\n");
+}
+
 const LoopParams = {
 	type: "object",
 	properties: {
 		task: { type: "string", description: "The task for the developer to implement." },
+		track: { type: "string", enum: ["backend", "frontend"], description: "Implementation track. 'frontend' routes to the ui-developer (Gemini 3.5 Flash, taste-first, with auto-fallback to Opus xhigh on tool failure); 'backend' (default) uses the gpt-5.5 developer." },
 		verifyCommand: { type: "string", description: "Optional explicit command the tester should run to verify." },
 		maxRounds: { type: "number", description: "Max dev->test->fix rounds (default 3)." },
 		cwd: { type: "string", description: "Working directory of the target repo (default current)." },
@@ -447,11 +456,13 @@ export default function (pi: ExtensionAPI) {
 				if (!params.task) {
 					return { content: [{ type: "text", text: "Provide `task` to start, or `resume: true`." }] };
 				}
-				state = initLedger(cwd, params.task, maxRounds, params.verifyCommand, sessionId);
+				const track: Track = params.track === "frontend" ? "frontend" : "backend";
+				state = initLedger(cwd, params.task, maxRounds, params.verifyCommand, sessionId, track);
 			}
 
 			const slug = state.slug;
-			const developer = loadAgent("developer");
+			const track: Track = state.track === "frontend" ? "frontend" : "backend";
+			const developer = loadAgent(track === "frontend" ? "ui-developer" : "developer");
 			const tester = loadAgent("tester");
 			const transcript: string[] = [];
 			const emit = (line: string) => {
@@ -459,6 +470,17 @@ export default function (pi: ExtensionAPI) {
 				onUpdate?.({ content: [{ type: "text", text: transcript.join("\n") }] });
 			};
 			const verifyCommand = state.verifyCommand ?? params.verifyCommand;
+			const gates = loadGates(cwd, state.verifyCommand ?? params.verifyCommand);
+			const perRoundCommandGates = gatesForStage(gates, "per-round").filter((gate) => gate.kind === "command" && gate.command);
+			const perRoundGateSummary = perRoundCommandGates.length
+				? perRoundCommandGates.map(commandGateLabel).join(", ")
+				: "(none; tester will infer the project's tests)";
+			const isLegacyVerifyGate = Boolean(
+				verifyCommand &&
+					perRoundCommandGates.length === 1 &&
+					perRoundCommandGates[0].name === "verify" &&
+					perRoundCommandGates[0].command === verifyCommand,
+			);
 
 			// Push this session's foreman tasks to the footer statusline (newest-first, with the live
 			// crew agent). No-op when there's no interactive UI (headless/print/RPC).
@@ -515,8 +537,9 @@ export default function (pi: ExtensionAPI) {
 						`# Plan: ${state.task}`,
 						"",
 						`- Working directory: ${cwd}`,
-						`- Verify command: ${verifyCommand ?? "(developer/tester will infer the project's tests)"}`,
-						`- Developer: ${developer.model ?? "default"} implements; controller runs verify (exit code = ground truth).`,
+						`- Track: ${track}${track === "frontend" ? " (ui-developer; auto-fallback to Opus xhigh on tool failure)" : ""}`,
+						`- Per-round command gates: ${perRoundGateSummary}`,
+						`- ${track === "frontend" ? "UI developer" : "Developer"}: ${developer.model ?? "default"} implements; controller runs per-round command gates (exit code = ground truth).`,
 						`- Tester: ${tester.model ?? "default"} judges intent and catches cheats.`,
 						`- Up to ${state.maxRounds} fix rounds, then escalate.`,
 						"",
@@ -535,7 +558,12 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			let devContext = `Implement this task in ${cwd}:\n${state.task}`;
-			if (verifyCommand) devContext += `\n\nVerify with: ${verifyCommand}`;
+			if (isLegacyVerifyGate) {
+				// Legacy no-foreman.json path: keep the developer prompt compatible with the old model.
+				devContext += `\n\nVerify with: ${verifyCommand}`;
+			} else if (perRoundCommandGates.length) {
+				devContext += `\n\nPer-round command gates:\n${perRoundCommandGates.map((gate) => `- ${gate.name}: ${gate.command}`).join("\n")}`;
+			}
 
 			// ---- GATE 2 resume: founder decides on a task that already passed verification ----
 			if (state.state === "awaiting_ship") {
@@ -586,14 +614,44 @@ export default function (pi: ExtensionAPI) {
 				});
 				pushStatus();
 				startSpinner();
-				const devRun = await runAgent(developer, devContext, cwd, {
+				const treeBefore = track === "frontend" ? workingTreeSnapshot(cwd) : null;
+				let devRun = await runAgent(developer, devContext, cwd, {
 					role: "developer",
 					round,
 					transcriptPath: devTranscript,
 					signal,
 				});
 				stopSpinner();
-				const devBlock = extractJsonBlock(devRun.text, "---DEV-JSON---", "---END-DEV-JSON---");
+				let devBlock = extractJsonBlock(devRun.text, "---DEV-JSON---", "---END-DEV-JSON---");
+
+				// ---- UI-DEVELOPER FALLBACK (frontend track only) ----
+				// Gemini has taste but is flaky at tool-calling; if it errored, skipped the machine block,
+				// or changed nothing on disk, re-run THIS round once with a stronger model (Opus xhigh).
+				if (track === "frontend" && !signal.aborted) {
+					const reason = devFallbackReason(devRun, devBlock != null, treeBefore, workingTreeSnapshot(cwd));
+					if (reason) {
+						appendLog(cwd, slug, { type: "ui_fallback", round, reason, from: developer.model ?? "default", to: UI_FALLBACK_MODEL });
+						emit(`Round ${round}: ui-developer fallback (${reason}) -> ${UI_FALLBACK_MODEL}`);
+						writeActivity(cwd, slug, {
+							round,
+							phase: "developer",
+							activeTranscript: path.basename(devTranscript),
+							note: `fallback -> ${UI_FALLBACK_MODEL} (${reason})`,
+							pid: process.pid,
+							ownerSessionId: sessionId,
+						});
+						pushStatus();
+						startSpinner();
+						devRun = await runAgent({ ...developer, model: UI_FALLBACK_MODEL }, devContext, cwd, {
+							role: "developer",
+							round,
+							transcriptPath: devTranscript,
+							signal,
+						});
+						stopSpinner();
+						devBlock = extractJsonBlock(devRun.text, "---DEV-JSON---", "---END-DEV-JSON---");
+					}
+				}
 				const devHandoff: Handoff = {
 					timestamp: new Date().toISOString(),
 					role: "developer",
@@ -606,35 +664,54 @@ export default function (pi: ExtensionAPI) {
 				};
 				writeHandoff(cwd, slug, devHandoff);
 
-				// ---- VERIFY (controller runs it; exit code = GROUND TRUTH) ----
-				const verifyCmd: string | undefined = verifyCommand ?? devBlock?.howToVerify;
+				// ---- VERIFY (controller runs command gates; exit code = GROUND TRUTH) ----
 				let verifyExit: number | null = null;
 				let verifyOutput = "";
+				let verifyResults: CommandGateResult[] = [];
+				let failedGate: CommandGateResult | undefined;
 				writeActivity(cwd, slug, {
 					round,
 					phase: "verify",
 					activeTranscript: null,
-					note: verifyCmd ? `running ${verifyCmd}` : "skipped (no verify command)",
+					note: perRoundCommandGates.length
+						? isLegacyVerifyGate
+							? `running ${verifyCommand}`
+							: `running gates: ${perRoundCommandGates.map((gate) => gate.name).join(", ")}`
+						: "skipped (no per-round command gates)",
 					pid: process.pid,
 					ownerSessionId: sessionId,
 				});
 				pushStatus();
-				if (verifyCmd) {
-					emit(`Round ${round}: verify \`${verifyCmd}\`...`);
+				if (perRoundCommandGates.length) {
+					emit(
+						isLegacyVerifyGate
+							? `Round ${round}: verify \`${verifyCommand}\`...`
+							: `Round ${round}: verify gates ${perRoundCommandGates.map((gate) => gate.name).join(", ")}...`,
+					);
 					startSpinner();
-					const v = await runVerify(verifyCmd, cwd, signal);
+					const gateRun = await runCommandGates(gates, "per-round", cwd, signal);
 					stopSpinner();
-					verifyExit = v.exitCode;
-					verifyOutput = v.output;
-					appendLog(cwd, slug, { type: "verify_ran", round, command: verifyCmd, exitCode: verifyExit });
+					verifyResults = gateRun.results;
+					failedGate = verifyResults.find((result) => result.exitCode !== 0);
+					verifyExit = gateRun.passed ? 0 : (failedGate?.exitCode ?? 1);
+					verifyOutput = formatCommandGateResults(verifyResults, 2000);
+					appendLog(cwd, slug, {
+						type: "verify_ran",
+						round,
+						command: verifyResults.length === 1 ? verifyResults[0].command : undefined,
+						exitCode: verifyExit,
+						gates: verifyResults.map((result) => ({ name: result.name, command: result.command, exitCode: result.exitCode })),
+					});
 				}
 
 				// ---- TESTER (judges intent; cannot override a non-zero exit into success) ----
 				emit(`Round ${round}: tester...`);
 				const verifyInfo =
 					verifyExit === null
-						? "No verify command was provided; run the project's tests yourself to check."
-						: `The verify command \`${verifyCmd}\` already ran. Exit code: ${verifyExit} (0 = passed).\nOutput:\n${verifyOutput.slice(-3000)}`;
+						? "No per-round command gates ran; run the project's tests yourself to check."
+						: isLegacyVerifyGate
+							? `The verify command \`${verifyCommand}\` already ran. Exit code: ${verifyExit} (0 = passed).\nOutput:\n${verifyResults[0]?.output.slice(-3000) ?? ""}`
+							: `The per-round command gates already ran. Aggregate exit code: ${verifyExit} (0 = passed; non-zero = failed).\n${verifyOutput.slice(-3000)}`;
 				const testerTask =
 					`Judge whether the work in ${cwd} satisfies this task: ${state.task}\n\n${verifyInfo}\n\n` +
 					`Read the changed files to confirm the change actually fulfills the task intent (not just that ` +
@@ -665,10 +742,10 @@ export default function (pi: ExtensionAPI) {
 				if (verifyExit !== null && verifyExit !== 0) {
 					successState = "fail"; // ground truth wins: a failing command is never success
 				} else if (verifyExit === 0) {
-					// command passed; tester may still flag fail/partial/blocked on intent grounds
+					// command gates passed; tester may still flag fail/partial/blocked on intent grounds
 					successState = judged === "success" || parsedFrom === "no-verdict-token" ? "success" : judged;
 				} else {
-					// no verify command ran; rely on tester judgment
+					// no command gates ran; rely on tester judgment
 					successState = judged;
 				}
 
@@ -684,7 +761,15 @@ export default function (pi: ExtensionAPI) {
 					sessionId: testSession,
 					successState,
 					summary: summaryLine.slice(0, 200),
-					verification: verifyExit === null ? undefined : { commandsRun: [{ command: verifyCmd!, exitCode: verifyExit, observation: verifyOutput.slice(-500) }] },
+					verification: verifyResults.length
+						? {
+								commandsRun: verifyResults.map((result) => ({
+									command: result.command,
+									exitCode: result.exitCode,
+									observation: `[${result.name}]\n${result.output.slice(-500)}`,
+								})),
+							}
+						: undefined,
 					raw: testRun.text,
 				};
 				writeHandoff(cwd, slug, testHandoff);
@@ -706,6 +791,7 @@ export default function (pi: ExtensionAPI) {
 
 				// ---- DECIDE ----
 				if (successState === "success") {
+					// TODO(Phase C): run declared pre-ship gates here before opening Gate 2.
 					// ---- GATE 2: SHIP APPROVAL (verification passed; founder OKs before done) ----
 					state.state = "awaiting_ship";
 					writeState(cwd, state);
@@ -726,11 +812,18 @@ export default function (pi: ExtensionAPI) {
 					emit(`ESCALATED (${successState}). Founder input needed. See ${path.relative(cwd, taskDir(cwd, slug))}.`);
 					return done();
 				}
-				// fail -> feed verify output + tester diagnosis back to developer for next round
+				// fail -> feed command-gate output + tester diagnosis back to developer for next round
+				const failedGateContext = failedGate
+					? isLegacyVerifyGate
+						? ` Verify \`${failedGate.command}\` exited ${failedGate.exitCode}.\nOutput:\n${failedGate.output.slice(-1500)}\n\n`
+						: ` Command gate "${failedGate.name}" \`${failedGate.command}\` exited ${failedGate.exitCode}.\nOutput:\n${failedGate.output.slice(-1500)}\n\n`
+					: verifyExit !== null
+						? ` Command gates exited ${verifyExit}.\nOutput:\n${verifyOutput.slice(-1500)}\n\n`
+						: "\n\n";
 				devContext =
 					`Continue task in ${cwd}: ${state.task}\n\n` +
 					`Round ${round} FAILED.` +
-					(verifyExit !== null ? ` Verify \`${verifyCmd}\` exited ${verifyExit}.\nOutput:\n${verifyOutput.slice(-1500)}\n\n` : "\n\n") +
+					failedGateContext +
 					`Tester diagnosis:\n${testHandoff.raw.slice(0, 1500)}\n\nFix ONLY what these point to.`;
 			}
 

@@ -16,11 +16,23 @@ their behalf and talks to the founder **only at decision points**. Build only wh
 | **Founder** | — (human) | — | Sets intent, approves gates, makes taste calls | Writes code |
 | **CTO** | `cliproxy/claude-opus-4-8:xhigh` | orchestration + `foreman`, `subagent` | Scopes, delegates, gates, synthesizes | Writes production code itself |
 | **scout** | `cliproxy/gemini-3.5-flash-low:high` | read, grep, find, ls | Fast recon, returns compressed context | Edits anything |
-| **developer** | `openai-codex/gpt-5.5:xhigh` | full tools | Implements code + tests on disk | Judges its own work |
+| **developer** | `openai-codex/gpt-5.5:xhigh` | full tools | Implements backend/logic + tests on disk | Judges its own work |
+| **ui-developer** | `cliproxy/gemini-3.5-flash-low:high` (→ `claude-opus-4-8:xhigh` on tool failure) | full tools | Implements the frontend/UI with taste | Judges its own work |
 | **tester** | `cliproxy/claude-opus-4-8:high` | read, grep, find, ls, bash | Judges intent, catches cheats | Edits code / fixes |
 
 Routing lives in `config/models.json` (provider/model metadata) and each role's `model:` frontmatter
 (`provider/id:thinking`). Valid thinking levels: `off|minimal|low|medium|high|xhigh` (`xhigh` = max).
+
+### Tracks (who implements)
+
+The CTO tags each task with a **track**, defaulting to `backend`:
+- `foreman({ task, track: "backend" })` (default) → the **developer** (gpt-5.5) implements.
+- `foreman({ task, track: "frontend" })` → the **ui-developer** (Gemini 3.5 Flash) implements, because
+  gpt-5.5 lacks frontend taste. Gemini has taste but is unreliable at tool-calling, so the controller
+  **auto-falls-back within the same round** to `claude-opus-4-8:xhigh` if the Gemini run errors, emits
+  no DEV-JSON machine block, or changes no files on disk. The track persists in the ledger (survives
+  resume); the fallback is logged as a `ui_fallback` event. The ledger role/phase stays `developer`
+  either way, so the loop, gates, and dashboard are unchanged.
 
 ## The loop
 

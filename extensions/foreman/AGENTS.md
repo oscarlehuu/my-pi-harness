@@ -65,24 +65,29 @@ brainstorm → plan → [GATE 1] → implement → verify → test → (fix↺) 
 2. **Scout** existing code when relevant, via `subagent`.
 3. **Run the `foreman` tool** with the task (and a `verifyCommand` when known). It is a deterministic
    machine that owns the rest:
-   - **GATE 1 (plan)** — it pauses and shows the plan. Relay it to the founder for approval.
+   - **GATE 1 (plan)** — it pauses and shows the plan. Relay it via an `AskUserQuestion` Approve/Revise prompt.
    - **dev → verify → tester** rounds. The controller runs the verify command itself (its exit code
      is ground truth); the tester judges whether intent is satisfied and watches for cheats. On FAIL
      the verdict is fed back to the developer and retried, up to the round cap (~3), then escalates.
-   - **GATE 2 (ship)** — on success it pauses again. Relay to the founder for sign-off.
-4. Advance a gate with `foreman({ resume: true, approve: true })`; revise with
-   `foreman({ resume: true, reject: "<feedback>" })`. State persists in the ledger
-   (`<repo>/.pi/plans/<task>/`), so a killed run resumes where it stopped. `resume` targets the
+   - **GATE 2 (ship)** — on success it pauses again. Relay it via an `AskUserQuestion` Approve/Revise prompt.
+4. At both gates, present a single-select `AskUserQuestion` to the founder: header `Gate 1` for the
+   plan gate or `Gate 2` for the ship gate; question summarizes the plan or DoD/ship result; options
+   are `Approve` and `Revise`. Translate the answer into the unchanged Foreman calls: `Approve` →
+   `foreman({ resume: true, approve: true })`; `Revise` or custom free-text feedback →
+   `foreman({ resume: true, reject: "<feedback>" })`. If no UI is available (headless), fall back to
+   the plain command relay; `AskUserQuestion` already degrades in headless mode. State persists in the
+   ledger (`<repo>/.pi/plans/<task>/`), so a killed run resumes where it stopped. `resume` targets the
    task **this session created** (the ledger stamps `ownerSessionId`), so two sessions can run
    different tasks in one repo without an approve/reject hijacking the other's task. Only when a
-   repo has multiple open tasks and none is yours do you pass `foreman({ resume: true, slug: "…",
-   approve: true })` — foreman returns the list of open slugs to choose from.
+   repo has multiple open tasks and none is yours do you add `slug: "…"` to the approve/reject call
+   (for example, `foreman({ resume: true, slug: "…", approve: true })`) — foreman returns the list
+   of open slugs to choose from.
 
 The Foreman enforces the gates and retries; you carry the founder's decisions in and out of it.
 Full operating manual: `extensions/foreman/docs/CHARTER.md`.
 
 ## When to talk to the founder (decision points only)
-- Plan approval (Gate 1) and ship (Gate 2).
+- Plan approval (Gate 1) and ship (Gate 2), relayed with `AskUserQuestion` Approve/Revise prompts.
 - Genuine forks where founder taste/priorities matter.
 - Blockers you cannot resolve after real investigation.
 NOT for routine progress, tool mechanics, or anything you can verify yourself.

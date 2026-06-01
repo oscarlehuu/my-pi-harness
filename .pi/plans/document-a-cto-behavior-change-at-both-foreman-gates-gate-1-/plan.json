@@ -1,0 +1,41 @@
+{
+  "summary": "DOC-ONLY change to two foreman charter files documenting a new CTO relay behavior: at BOTH Foreman gates (Gate 1 plan, Gate 2 ship) the CTO presents an AskUserQuestion (Approve/Revise, free-text treated as Revise) and translates the answer into the UNCHANGED foreman({ resume:true, approve:true }) or foreman({ resume:true, reject:'<feedback>' }) call; plain command relay is the explicit headless fallback. Foreman's gate machinery, params, persistence, and resume semantics are untouched. Only AGENTS.md and CHARTER.md change.",
+  "steps": [
+    "Edit extensions/foreman/AGENTS.md '## The Foreman loop' step 4 (AGENTS.md:88): document that the CTO presents an AskUserQuestion at BOTH Gate 1 and Gate 2 (header 'Gate 1'/'Gate 2'; question = short relay of the plan summary / DoD-ship summary; options Approve and Revise; custom free-text = Revise feedback) and translates the choice into the same foreman call — Approve -> foreman({ resume:true, approve:true }) (plus slug when needed), Revise/free-text -> foreman({ resume:true, reject:'<feedback>' }). Keep the existing command syntax as what AskUserQuestion maps to AND the headless fallback (note AskUserQuestion degrades to plain command relay when no UI/TTY).",
+    "Briefly reflect the AskUserQuestion relay in AGENTS.md '## When to talk to the founder' Gate-approval bullet (AGENTS.md:101) without rewriting the section.",
+    "Edit extensions/foreman/docs/CHARTER.md '## The two gates' (CHARTER.md:81): add prose/note that each gate is relayed to the founder via an AskUserQuestion (Approve/Revise) which the CTO translates into foreman({ resume:true, approve:true }) or foreman({ resume:true, reject:'…' }); keep the table's existing Approve/Revise command columns as the underlying mechanism; explicitly note the plain-command headless fallback.",
+    "Keep edits tight and in the existing doc voice; do not touch any .ts, crew/*.md, dashboard, tests, .pi/foreman.json, or unrelated sections.",
+    "Self-verify: confirm both docs mention AskUserQuestion in a gate context and git diff --name-only shows only the two doc files (no .ts / .pi/foreman.json)."
+  ],
+  "filesLikely": [
+    "extensions/foreman/AGENTS.md",
+    "extensions/foreman/docs/CHARTER.md"
+  ],
+  "risks": [
+    "Scope creep into foreman code/behavior: STRICT doc-only — must not edit any .ts, crew/*.md, gates.ts/index.ts/ship.ts/done.ts/reviewer.ts/planner.ts, dashboard, tests, or .pi/foreman.json.",
+    "Must NOT alter foreman's gate contract/params/resume semantics; AskUserQuestion is only the CTO relay surface, approve/reject still flow through foreman.",
+    "Headless behavior must stay well-defined: explicitly document the plain command relay fallback when no UI/TTY is available.",
+    "Working tree already has unrelated .pi/plans/*.jsonl + state.json churn from prior runs; the no-modification assertion targets *.ts and .pi/foreman.json (and crew), which this task leaves untouched, so the gate's git diff check is scoped to those paths.",
+    "proposedGates mirror the existing .pi/foreman.json gates exactly (verified all referenced test scripts and planner.md exist); not overwriting or copying the legacy controller-fallback command."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ]
+}

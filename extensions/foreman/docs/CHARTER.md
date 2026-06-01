@@ -59,13 +59,18 @@ Driven by the `foreman` tool (`extensions/foreman/`). The CTO starts it; the mac
 
 ## The two gates
 
-| Gate | When | Approve | Revise |
-|------|------|---------|--------|
-| **1 — Plan** | Before any code runs | `foreman({ resume:true, approve:true })` → runs rounds | `foreman({ resume:true, reject:"…" })` → halts |
-| **2 — Ship** | After verification passes | `foreman({ resume:true, approve:true })` → done | `foreman({ resume:true, reject:"…" })` → reopens for another round |
+| Gate | When | Founder relay | Approve | Revise |
+|------|------|----------------|---------|--------|
+| **1 — Plan** | Before any code runs | `AskUserQuestion` header `Gate 1`; summarize the plan; options `Approve`/`Revise` | `foreman({ resume:true, approve:true })` → runs rounds | `foreman({ resume:true, reject:"…" })` → halts |
+| **2 — Ship** | After verification passes | `AskUserQuestion` header `Gate 2`; summarize DoD/ship result; options `Approve`/`Revise` | `foreman({ resume:true, approve:true })` → done | `foreman({ resume:true, reject:"…" })` → reopens for another round |
 
 Gates are conversational and **persisted in the ledger**, so a killed/resumed session respects gate
-position. The CTO relays gate prompts to the founder and carries the decision back.
+position. The CTO relays each gate to the founder with a single-select `AskUserQuestion` and carries
+the decision back by translating `Approve` to `foreman({ resume:true, approve:true })`; `Revise` or
+custom free-text feedback to `foreman({ resume:true, reject:"…" })` (plus `slug` when needed by
+normal resume semantics). The Foreman gate contract is unchanged; `AskUserQuestion` is only the CTO
+relay surface. If no UI is available (headless), fall back to the plain command relay;
+`AskUserQuestion` already degrades in headless mode.
 
 ## Definition of Done
 

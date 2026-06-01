@@ -2,7 +2,7 @@
 
 import * as os from "node:os";
 import { getMarkdownTheme, type Theme, type ThemeColor } from "@earendil-works/pi-coding-agent";
-import { Container, Key, Markdown, matchesKey, truncateToWidth, visibleWidth, type Focusable, type TUI } from "@earendil-works/pi-tui";
+import { Container, Key, type KeyId, Markdown, matchesKey, truncateToWidth, visibleWidth, type Focusable, type TUI } from "@earendil-works/pi-tui";
 import {
 	buildRootRows,
 	listRuns,
@@ -207,9 +207,9 @@ export class ForemanDashboard extends Container implements Focusable {
 
 	handleInput(data: string): void {
 		// The same keys that open the dashboard also close it (toggle), so you don't reach for Esc.
-		// While the component is focused the editor's shortcut handler doesn't run, so we match the raw
-		// control bytes the terminal sends: Ctrl+B = \x02, Ctrl+F = \x06.
-		if (data === "\x02" || data === "\x06") {
+		// Terminals encode Ctrl+B/Ctrl+F as Kitty CSI-u sequences (e.g. ESC[98;5u), not raw \x02/\x06,
+		// so match by key id exactly as registerShortcut does for opening.
+		if (matchesKey(data, "ctrl+b" as KeyId) || matchesKey(data, "ctrl+f" as KeyId)) {
 			this.close();
 			return;
 		}

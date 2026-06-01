@@ -335,18 +335,30 @@ export function readActivity(cwd: string, slug: string): ForemanActivity | null 
 
 export type StatuslineGlyph = "running" | "gate" | "escalated" | "done" | "idle";
 
+export type StatuslinePhase = "developer" | "verify" | "tester" | "planner" | "reviewer";
+
 export interface StatuslineTask {
 	slug: string;
 	label: string;
 	state: string;
 	/** Live crew phase from activity.json when the task is actively running, else null. */
-	phase: "developer" | "verify" | "tester" | null;
+	phase: StatuslinePhase | null;
 	glyph: StatuslineGlyph;
 	/** Current round, when known (0 = not started). */
 	round: number;
 	maxRounds: number;
 	/** Short human state word for the segment (e.g. "dev", "verify", "gate", "done"). */
 	detail: string;
+	/** Role inferred from the active transcript/activity (e.g. planner, developer, reviewer). */
+	liveRole?: string;
+	/** Human current action from the last tool_call in the active transcript. */
+	liveAction?: string;
+	/** Number of tool_call events seen in the active transcript. */
+	toolCount?: number;
+	/** Latest usage.contextTokens from the active transcript. */
+	ctxTokens?: number;
+	/** Milliseconds since the active transcript's agent_start.t, injected from opts.now. */
+	elapsedMs?: number;
 }
 
 export interface StatuslineOptions {
@@ -373,15 +385,132 @@ function shortLabel(task: string, slug: string, max = 36): string {
 	return `${(lastSpace > 10 ? clipped.slice(0, lastSpace) : clipped).trimEnd()}\u2026`;
 }
 
-function livePhase(phase: ActivityPhase): "developer" | "verify" | "tester" | null {
-	return phase === "developer" || phase === "verify" || phase === "tester" ? phase : null;
+function livePhase(phase: ActivityPhase): StatuslinePhase | null {
+	return phase === "developer" || phase === "verify" || phase === "tester" || phase === "planner" || phase === "reviewer" ? phase : null;
 }
 
-const PHASE_LABEL: Record<"developer" | "verify" | "tester", string> = {
+const PHASE_LABEL: Record<StatuslinePhase, string> = {
 	developer: "dev",
 	verify: "verify",
 	tester: "test",
+	planner: "plan",
+	reviewer: "review",
 };
+
+interface ActiveTranscriptInfo {
+	role?: string;
+	liveAction?: string;
+	toolCount?: number;
+	ctxTokens?: number;
+	elapsedMs?: number;
+}
+
+function argsRecord(value: unknown): JsonRecord {
+	if (isRecord(value)) return value;
+	if (typeof value === "string") {
+		const parsed = safeParseJson(value);
+		if (isRecord(parsed)) return parsed;
+	}
+	return {};
+}
+
+function argString(args: JsonRecord, names: string[]): string | undefined {
+	for (const name of names) {
+		const value = args[name];
+		if (typeof value === "string" && value.trim()) return value;
+	}
+	return undefined;
+}
+
+function basename(value: string | undefined, fallback = "..."): string {
+	if (!value) return fallback;
+	const base = path.basename(value);
+	return base || value || fallback;
+}
+
+function truncateAction(value: string, max = 32): string {
+	const compact = value.replace(/\s+/g, " ").trim();
+	if (compact.length <= max) return compact;
+	return `${compact.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
+}
+
+function actionFromToolCall(event: ToolCallEvent): string {
+	const name = event.name || "tool";
+	const args = argsRecord(event.args);
+	switch (name) {
+		case "bash":
+			return `running ${truncateAction(argString(args, ["command"]) ?? "...")}`;
+		case "read":
+			return `reading ${basename(argString(args, ["path", "file_path"]))}`;
+		case "write":
+		case "edit":
+			return `editing ${basename(argString(args, ["path", "file_path"]))}`;
+		case "grep":
+		case "find":
+			return "searching";
+		default:
+			return name;
+	}
+}
+
+function inferLiveRole(phase: ActivityPhase, transcriptRole?: string, note = ""): string | undefined {
+	const role = transcriptRole?.toLowerCase();
+	const normalizedNote = note.toLowerCase();
+	if (role === "planner") return "planner";
+	if (role === "reviewer" || normalizedNote.includes("reviewer") || normalizedNote.includes("pre-ship judge")) return "reviewer";
+	if (role === "tester") return "tester";
+	if (role === "developer") return "developer";
+	if (phase === "planner") return "planner";
+	if (phase === "reviewer") return "reviewer";
+	if (phase === "verify") return "verify";
+	if (phase === "tester") return "tester";
+	if (phase === "developer") return "developer";
+	return role || undefined;
+}
+
+function fallbackLiveAction(role?: string): string | undefined {
+	if (role === "planner" || role === "tester" || role === "reviewer") return role;
+	return undefined;
+}
+
+function readActiveTranscriptInfo(cwd: string, slug: string, activity: ForemanActivity, now: number): ActiveTranscriptInfo {
+	try {
+		if (!activity.activeTranscript) return {};
+		const events = readTranscript(cwd, slug, activity.activeTranscript);
+		if (events.length === 0) return {};
+		let role: string | undefined;
+		let startMs: number | undefined;
+		let lastToolCall: ToolCallEvent | undefined;
+		let toolCount = 0;
+		let ctxTokens: number | undefined;
+		for (const event of events) {
+			if (event.kind === "agent_start") {
+				if (!role) role = event.role;
+				if (startMs === undefined && event.t) {
+					const parsed = parseTime(event.t);
+					if (parsed > 0) startMs = parsed;
+				}
+				continue;
+			}
+			if (event.kind === "tool_call") {
+				toolCount += 1;
+				lastToolCall = event;
+				continue;
+			}
+			if (event.kind === "usage" && event.contextTokens > 0) ctxTokens = event.contextTokens;
+		}
+		const liveRole = inferLiveRole(activity.phase, role, activity.note);
+		return {
+			...(liveRole ? { role: liveRole } : {}),
+			...(lastToolCall ? { liveAction: actionFromToolCall(lastToolCall) } : fallbackLiveAction(liveRole) ? { liveAction: fallbackLiveAction(liveRole) } : {}),
+			...(toolCount > 0 ? { toolCount } : {}),
+			...(ctxTokens !== undefined ? { ctxTokens } : {}),
+			...(startMs !== undefined ? { elapsedMs: Math.max(0, now - startMs) } : {}),
+		};
+	} catch {
+		return {};
+	}
+}
 
 /**
  * Build a compact, newest-first model of this session's foreman tasks for the footer statusline.
@@ -396,6 +525,8 @@ export function buildStatuslineModel(cwd: string, opts: StatuslineOptions = {}):
 		const activity = readActivity(cwd, t.slug);
 		const fresh = activity ? now - parseTime(activity.updatedAt) <= staleMs : false;
 		const phase = activity && fresh && t.state !== "done" ? livePhase(activity.phase) : null;
+		const liveInfo: ActiveTranscriptInfo = activity && fresh && t.state !== "done" && phase ? readActiveTranscriptInfo(cwd, t.slug, activity, now) : {};
+		const liveRole = activity && fresh && t.state !== "done" && phase ? (liveInfo.role ?? inferLiveRole(activity.phase, undefined, activity.note)) : undefined;
 		let glyph: StatuslineGlyph;
 		if (t.state === "done") glyph = "done";
 		else if (t.state === "escalated") glyph = "escalated";
@@ -410,13 +541,20 @@ export function buildStatuslineModel(cwd: string, opts: StatuslineOptions = {}):
 			glyph,
 			round: t.round,
 			maxRounds: t.maxRounds,
-			detail: statusDetail(t.state, phase),
+			detail: statusDetail(t.state, phase, liveRole),
+			...(liveRole ? { liveRole } : {}),
+			...(liveInfo.liveAction ? { liveAction: liveInfo.liveAction } : {}),
+			...(liveInfo.toolCount !== undefined ? { toolCount: liveInfo.toolCount } : {}),
+			...(liveInfo.ctxTokens !== undefined ? { ctxTokens: liveInfo.ctxTokens } : {}),
+			...(liveInfo.elapsedMs !== undefined ? { elapsedMs: liveInfo.elapsedMs } : {}),
 		};
 	});
 }
 
 /** Short human word for a task segment: the live agent when running, else the state. */
-function statusDetail(state: string, phase: "developer" | "verify" | "tester" | null): string {
+function statusDetail(state: string, phase: StatuslinePhase | null, role?: string): string {
+	if (role === "planner") return "plan";
+	if (role === "reviewer") return "review";
 	if (phase) return PHASE_LABEL[phase];
 	switch (state) {
 		case "awaiting_ship":
@@ -487,6 +625,145 @@ export function formatStatusline(model: StatuslineTask[], opts: FormatStatusline
 	if (hidden > 0) segments.push(color("muted", `+${hidden} more`));
 	const sep = color("dim", "   ");
 	return `${color("muted", "foreman")}  ${segments.join(sep)}`;
+}
+
+export interface FormatStatusPanelOptions extends FormatStatuslineOptions {
+	/** Visible width for the title rule/right summary. Default 80. */
+	width?: number;
+	/** Max non-done task blocks before collapsing into a +N line. Default 4. */
+	maxTasks?: number;
+	/** Hard cap for setWidget lines. Default 7. */
+	maxLines?: number;
+}
+
+export interface SortForPickerOptions {
+	/** Slugs with fresh non-idle activity; these sort above gated/stuck work. */
+	liveSlugs?: Iterable<string>;
+}
+
+function statusAttentionRank(task: StatuslineTask): number {
+	if (task.glyph === "running") return 0;
+	if (task.glyph === "gate") return 1;
+	if (task.glyph === "escalated") return 2;
+	if (task.state === "done") return 4;
+	return 3;
+}
+
+function pickerAttentionRank(task: ForemanTaskSummary, liveSlugs: Set<string>): number {
+	if (liveSlugs.has(task.slug)) return 0;
+	if (task.state === "awaiting_ship" || task.state === "planning") return 1;
+	if (task.state === "escalated") return 2;
+	if (task.state === "done") return 4;
+	return 3;
+}
+
+function roleBadge(task: StatuslineTask): string {
+	if (task.liveRole === "planner" || task.phase === "planner") return "PLAN";
+	if (task.liveRole === "reviewer" || task.phase === "reviewer") return "REVIEW";
+	if (task.phase === "verify" || task.liveRole === "verify") return "VERIFY";
+	if (task.phase === "tester" || task.liveRole === "tester") return "TEST";
+	return "DEV";
+}
+
+export function formatElapsed(ms: number | undefined): string {
+	if (ms === undefined || !Number.isFinite(ms)) return "";
+	const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function formatPanelTokens(tokens: number): string {
+	if (tokens < 1000) return tokens.toString();
+	if (tokens < 10000) return `${(tokens / 1000).toFixed(1)}k`;
+	if (tokens < 1000000) return `${Math.round(tokens / 1000)}k`;
+	return `${(tokens / 1000000).toFixed(1)}M`;
+}
+
+function panelTitle(activeCount: number, doneCount: number, width: number, color: (token: string, text: string) => string): string {
+	const summaryParts: string[] = [];
+	if (activeCount > 0) summaryParts.push(`${activeCount} active`);
+	if (doneCount > 0) summaryParts.push(`${doneCount} done`);
+	const summary = summaryParts.join(" · ");
+	const left = "─ FOREMAN ";
+	const summaryGap = summary ? 2 : 0;
+	const fill = "─".repeat(Math.max(1, width - left.length - summary.length - summaryGap));
+	return `${color("accent", `${left}${fill}`)}${summary ? `  ${color("muted", summary)}` : ""}`;
+}
+
+function renderPanelBlock(task: StatuslineTask, color: (token: string, text: string) => string, frame: number): string[] {
+	if (task.glyph === "running") {
+		const spinner = color("accent", SPINNER[frame % SPINNER.length]);
+		const badge = color("accent", roleBadge(task).padEnd(6));
+		const tailParts = [`R${task.round}/${task.maxRounds || "?"}`];
+		const elapsed = formatElapsed(task.elapsedMs);
+		if (elapsed) tailParts.push(elapsed);
+		const lines = [`${spinner} ${badge}${color("text", task.label)} ${color("dim", "·")} ${color("muted", tailParts.join(" · "))}`];
+		const subParts: string[] = [];
+		if (task.liveAction) subParts.push(task.liveAction);
+		if (task.toolCount !== undefined) subParts.push(`${task.toolCount} tool${task.toolCount === 1 ? "" : "s"}`);
+		if (task.ctxTokens !== undefined) subParts.push(`${formatPanelTokens(task.ctxTokens)} ctx`);
+		if (subParts.length > 0) lines.push(color("dim", `  ↳ ${subParts.join(" · ")}`));
+		return lines;
+	}
+	if (task.glyph === "gate") {
+		const prompt = task.state === "planning" ? "needs you: plan?" : "needs you: ship?";
+		return [`${color("warning", "◆")} ${color("text", task.label)} ${color("dim", "—")} ${color("warning", prompt)}`];
+	}
+	if (task.glyph === "escalated") {
+		return [`${color("error", "⚠")} ${color("text", task.label)} ${color("dim", "—")} ${color("warning", "stuck")}`];
+	}
+	return [`${color("muted", "·")} ${color("text", task.label)} ${color("dim", "— idle")}`];
+}
+
+/**
+ * Render a multi-line, session-scoped Foreman panel for ctx.ui.setWidget(). Done tasks collapse into
+ * the title count; non-done work is listed in attention order and capped for the editor widget.
+ */
+export function formatStatusPanel(model: StatuslineTask[], opts: FormatStatusPanelOptions = {}): string[] {
+	if (model.length === 0) return [];
+	const color = opts.color ?? ((_token, text) => text);
+	const frame = opts.frame ?? 0;
+	const maxTasks = opts.maxTasks ?? 4;
+	const maxLines = Math.max(1, opts.maxLines ?? 7);
+	const width = Math.max(24, opts.width ?? 80);
+	const activeCount = model.filter((task) => task.state !== "done").length;
+	const doneCount = model.length - activeCount;
+	const lines = [panelTitle(activeCount, doneCount, width, color)];
+	if (activeCount === 0 || maxLines === 1) return lines.slice(0, maxLines);
+	const ordered = model
+		.filter((task) => task.state !== "done")
+		.sort((a, b) => statusAttentionRank(a) - statusAttentionRank(b) || b.round - a.round || a.label.localeCompare(b.label));
+	let shown = 0;
+	for (const task of ordered.slice(0, maxTasks)) {
+		const block = renderPanelBlock(task, color, frame);
+		const hiddenIfShown = ordered.length - shown - 1;
+		const reserveMoreLine = hiddenIfShown > 0 ? 1 : 0;
+		let available = maxLines - lines.length - reserveMoreLine;
+		if (available <= 0) break;
+		const primary = block[0];
+		if (primary) {
+			lines.push(primary);
+			available -= 1;
+		}
+		if (available > 0 && block[1]) lines.push(block[1]);
+		shown += 1;
+	}
+	const hidden = ordered.length - shown;
+	if (hidden > 0 && lines.length < maxLines) lines.push(color("muted", `+${hidden} more`));
+	return lines.slice(0, maxLines);
+}
+
+/** Sort task picker rows by attention, ownership, then recency. Pure and stable for tests. */
+export function sortForPicker(tasks: ForemanTaskSummary[], sessionId?: string, opts: SortForPickerOptions = {}): ForemanTaskSummary[] {
+	const liveSlugs = new Set(opts.liveSlugs ?? []);
+	return [...tasks].sort((a, b) => {
+		const attention = pickerAttentionRank(a, liveSlugs) - pickerAttentionRank(b, liveSlugs);
+		if (attention !== 0) return attention;
+		const owner = (sessionId && a.ownerSessionId === sessionId ? 0 : 1) - (sessionId && b.ownerSessionId === sessionId ? 0 : 1);
+		if (owner !== 0) return owner;
+		return parseTime(b.updatedAt) - parseTime(a.updatedAt) || a.slug.localeCompare(b.slug);
+	});
 }
 
 /** List transcript JSONL runs, parsed from filenames and sorted chronologically. */

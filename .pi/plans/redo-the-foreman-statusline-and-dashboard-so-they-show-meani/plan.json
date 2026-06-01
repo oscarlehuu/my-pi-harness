@@ -1,0 +1,48 @@
+{
+  "summary": "Replace Foreman's useless one-line footer with a bordered, session-scoped, LIVE multi-line panel via ctx.ui.setWidget(...,{placement:'aboveEditor'}), and make the dashboard session-ownership unmistakable. All new logic is PURE+injectable in reader.ts (enriched RUNNING-task fields liveAction/toolCount/ctxTokens/elapsedMs from the active transcript; a formatStatusPanel producing ≤7 lines with a '─ FOREMAN ─… N active · M done' title that COLLAPSES done to a count and lists only non-done tasks in attention order; a sortForPicker comparator). index.ts rewires the single pushStatus() helper to build the sessionId-scoped enriched model and setWidget the panel on every phase transition and on the ~120ms spinner ticker (clearing with undefined when idle, no-op when setWidget is absent), and threads getSessionId() into both dashboard shortcut handlers; view.ts adds owner badges, a 'N tasks · K yours' header, attention+yours-first picker sort, an 'm' mine-only filter, root owner badge, and a live agent header. Verification extends reader_test.sh headlessly. Blast radius is exactly reader.ts, view.ts, index.ts, reader_test.sh.",
+  "steps": [
+    "RECON DONE: confirmed reader.ts is pure (node builtins only) and owns buildStatuslineModel:391/formatStatusline:470/StatuslineTask:338/shortLabel:366/SPINNER:462/readTranscript:506; index.ts pushStatus:1081 + 120ms startSpinner:1092 funnel through one helper; both shortcuts (976/990) construct ForemanDashboard; pi 0.78.0 exposes setWidget (types.d.ts:96, MAX_WIDGET_LINES=10, ANSI-preserving string[], undefined clears) and getSessionId (session-manager.d.ts:188); .pi/foreman.json has verify/review/commit; baseline reader_test green.",
+    "reader.ts — ENRICH model: extend StatuslineTask (or add buildStatusPanelModel) with optional liveAction/toolCount/ctxTokens/elapsedMs populated ONLY for RUNNING tasks by reading activity.activeTranscript via the existing readTranscript: liveAction from the last tool_call (bash→'running <cmd≤32>', read→'reading <basename>', write/edit→'editing <basename>', grep/find→'searching', planner/tester/reviewer role-phases keep their role word, else tool name); toolCount = #tool_call; ctxTokens = last usage.contextTokens; elapsedMs = now − agent_start.t. Keep PURE (inject now via opts), defensive (missing/truncated transcript ⇒ omit the field, never throw), read only the active transcript and cap the read (50KB fine). Preserve buildStatuslineModel's opts.sessionId scoping exactly as today (reader.ts:393).",
+    "reader.ts — ADD formatStatusPanel(model, opts): string[] returning bordered lines (≤7; injectable color/frame/now, only existing theme tokens accent/warning/success/muted/dim/text/error). Line 1 = title rule '─ FOREMAN ─…' left with a right-aligned '<N active> · <N done>' summary (omit a zero side); compute alignment on UNcolored widths then colorize (same trick formatStatusline uses) since reader cannot import TUI. Then ONE block per NON-DONE task in attention order: running first (braille spinner accent + role badge DEV/VERIFY/TEST/PLAN/REVIEW from phase + label + 'R<round>/<max> · <elapsed>' muted + indented dim sub-line '↳ <liveAction> · <toolCount> tools · <ctx>k ctx', omitting unknown pieces), then gates (◆ '<label> — needs you: ship?/plan?' warning), then escalated (⚠ '<label> — stuck'). Finished tasks are NEVER listed — they only feed the '· N done' count. If >4 non-done blocks, show 4 then a '+K more' muted line. Reuse shortLabel; brand stays uppercase 'FOREMAN'. Render elapsed at SECOND granularity (Xm Ys / Ys) so an 8Hz ticker doesn't jitter.",
+    "reader.ts — ADD exported pure sortForPicker(tasks, sessionId): attention rank (running/live > awaiting_ship/planning gate > escalated > in_progress > done), then yours-before-others (ownerSessionId===sessionId), then updatedAt desc. Leave listTasks' existing sort untouched.",
+    "index.ts — REWRITE the single pushStatus() helper (index.ts:1081): build the enriched sessionId-scoped model and call ctx.ui.setWidget(STATUS_KEY, lines, { placement:'aboveEditor' }); when the session has NO non-done task, call setWidget(STATUS_KEY, undefined) to CLEAR; guard with typeof ctx.ui.setWidget !== 'function' ⇒ no-op (headless/RPC unaffected). Switch startSpinner/stopSpinner guards from setStatus to setWidget (index.ts:1093) and keep the ~120ms ticker so spinner+elapsed+liveAction animate. Pass now/frame through. Leave DIRECT_STATUS_KEY setStatus calls (index.ts:967/970) exactly as-is. No per-call-site edits needed since all ~12 pushStatus()/done() sites route through the helper.",
+    "index.ts — THREAD sessionId into the dashboard: in both shortcut handlers (index.ts:982 ctrl+b, :996 ctrl+f) pass ctx.sessionManager?.getSessionId?.() as new ForemanDashboard(ctx.cwd, tui, theme, done, { openLive?, sessionId }).",
+    "view.ts — accept { openLive?, sessionId } in the constructor (view.ts:150) and store sessionId. PICKER (renderPicker:425/renderTaskRow:521): owner badge per row ('● yours' accent when task.ownerSessionId===sessionId, 'session <first6>' dim for others, '—' dim when none); header '<N> tasks · <K> yours'; sort rows via reader.sortForPicker; add an 'm' key + footer hint toggling a MINE-ONLY filter and reflect 'mine only' in the header. ROOT header (renderRoot:452): owner badge for that task. AGENT header (renderAgent:483): reuse reader enrichment to show '● running · <liveAction> · <elapsed> · <toolCount> tools' beside role/round/model. Keep all existing keys/navigation (picker↔root↔agent, live tail/follow, ctrl+b/ctrl+f toggle-close) working.",
+    "reader_test.sh — EXTEND (same headless node --input-type=module + node:assert/strict, no TTY, no spawn): (1) enriched RUNNING model derives liveAction/toolCount/ctxTokens/elapsedMs from a seeded active transcript (fixed agent_start.t + a couple tool_call + a usage) and OMITS them when the transcript is absent; (2) formatStatusPanel: line 1 starts '─ FOREMAN', includes 'N active · M done' with a seeded DONE task collapsed to the count (not its own block), a running task renders spinner+role badge+elapsed+'↳ … tools … ctx', a gate task renders 'needs you: ship?', and frame 0 ≠ frame 1; (3) session scoping: a task owned by another session is excluded from the panel; (4) sortForPicker attention+yours-first ordering (running before gate before done; yours before others at equal attention). Keep ALL existing reader_test assertions green.",
+    "VERIFY: run bash extensions/foreman/dashboard/test/reader_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh; baseline reader_test already passes, so confirm the new assertions and the other three suites stay green."
+  ],
+  "filesLikely": [
+    "extensions/foreman/dashboard/reader.ts",
+    "extensions/foreman/dashboard/view.ts",
+    "extensions/foreman/index.ts",
+    "extensions/foreman/dashboard/test/reader_test.sh"
+  ],
+  "risks": [
+    "Right-aligned title summary + sub-line layout must be computed on UNcolored string widths (reader.ts cannot import pi-tui's visibleWidth); mitigate by padding raw text first then applying the injected colorizer, exactly as formatStatusline already does.",
+    "pushStatus() is invoked from ~12 sites (index.ts:1272/1300/1341/1386/1446/1486/1532/1620 etc.) but all funnel through the single helper, so rewiring the helper covers them; only the startSpinner/stopSpinner guard token changes from setStatus to setWidget. No control-flow/gate/ledger changes.",
+    "sessionId must be present in the shortcut handler ctx; the task confirms ctx.sessionManager.getSessionId() is available, but use optional chaining so a missing manager degrades to undefined (badges fall back to dim '—'/'session …').",
+    "8Hz ticker re-reads the active transcript each frame; cap the read (50KB) and render elapsed at second granularity to avoid churn/jitter, and keep every new reader fn defensive (truncated/missing files ⇒ safe omit, never throw).",
+    "setWidget panel must stay ≤7 lines (pi caps at 10, MAX_WIDGET_LINES=1445); '+K more' collapse and done-as-count keep it bounded. Headless path (no setWidget) must be a clean no-op — preserve the typeof guard.",
+    ".pi/foreman.json already exists with verify/review/commit; plan reflects those gates and does NOT propose overwriting. proposedGates mirrors the existing manifest verbatim."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ]
+}

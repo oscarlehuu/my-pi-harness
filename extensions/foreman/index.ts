@@ -37,7 +37,7 @@ import {
 	writeState,
 } from "./ledger.ts";
 import { ForemanDashboard } from "./dashboard/view.ts";
-import { buildStatuslineModel, formatStatusline } from "./dashboard/reader.ts";
+import { buildStatuslineModel, formatStatusPanel } from "./dashboard/reader.ts";
 import { devFallbackReason, workingTreeSnapshot } from "./fallback.ts";
 import {
 	type CommandGateResult,
@@ -982,7 +982,8 @@ export default function (pi: ExtensionAPI) {
 			if (!ctx.hasUI || dashboardOpen) return;
 			dashboardOpen = true;
 			try {
-				await ctx.ui.custom<void>((tui, theme, _keybindings, done) => new ForemanDashboard(ctx.cwd, tui, theme, done));
+				const sessionId = ctx.sessionManager?.getSessionId?.();
+				await ctx.ui.custom<void>((tui, theme, _keybindings, done) => new ForemanDashboard(ctx.cwd, tui, theme, done, { sessionId }));
 			} finally {
 				dashboardOpen = false;
 			}
@@ -996,7 +997,8 @@ export default function (pi: ExtensionAPI) {
 			if (!ctx.hasUI || dashboardOpen) return;
 			dashboardOpen = true;
 			try {
-				await ctx.ui.custom<void>((tui, theme, _keybindings, done) => new ForemanDashboard(ctx.cwd, tui, theme, done, { openLive: true }));
+				const sessionId = ctx.sessionManager?.getSessionId?.();
+				await ctx.ui.custom<void>((tui, theme, _keybindings, done) => new ForemanDashboard(ctx.cwd, tui, theme, done, { openLive: true, sessionId }));
 			} finally {
 				dashboardOpen = false;
 			}
@@ -1078,22 +1080,23 @@ export default function (pi: ExtensionAPI) {
 					}),
 				);
 
-			// Push this session's foreman tasks to the footer statusline (newest-first, with the live
-			// crew agent). No-op when there's no interactive UI (headless/print/RPC).
+			// Push this session's Foreman tasks to a live above-editor widget. No-op when there's no
+			// interactive widget API (headless/print/RPC); direct-edit footer status stays separate.
 			let statusFrame = 0;
 			const pushStatus = () => {
-				const setStatus = ctx?.ui?.setStatus;
-				if (typeof setStatus !== "function") return;
+				const setWidget = ctx?.ui?.setWidget;
+				if (typeof setWidget !== "function") return;
 				const theme = ctx.ui.theme;
 				const color = typeof theme?.fg === "function" ? (token: string, text: string) => theme.fg(token, text) : undefined;
 				const model = buildStatuslineModel(cwd, { sessionId });
-				const line = formatStatusline(model, { color, frame: statusFrame });
-				setStatus.call(ctx.ui, STATUS_KEY, line || undefined);
+				const hasNonDone = model.some((task) => task.state !== "done");
+				const lines = hasNonDone ? formatStatusPanel(model, { color, frame: statusFrame }) : undefined;
+				setWidget.call(ctx.ui, STATUS_KEY, lines, { placement: "aboveEditor" });
 			};
-			// Animate the live spinner in the footer while an agent is spawning (interactive only).
+			// Animate the live spinner in the panel while an agent is spawning (interactive only).
 			let spinnerTimer: ReturnType<typeof setInterval> | null = null;
 			const startSpinner = () => {
-				if (spinnerTimer || typeof ctx?.ui?.setStatus !== "function") return;
+				if (spinnerTimer || typeof ctx?.ui?.setWidget !== "function") return;
 				spinnerTimer = setInterval(() => {
 					statusFrame += 1;
 					pushStatus();

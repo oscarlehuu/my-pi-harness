@@ -5,14 +5,18 @@ import { getMarkdownTheme, type Theme, type ThemeColor } from "@earendil-works/p
 import { Container, Key, type KeyId, Markdown, matchesKey, truncateToWidth, visibleWidth, type Focusable, type TUI } from "@earendil-works/pi-tui";
 import {
 	buildRootRows,
+	buildStatuslineModel,
+	formatElapsed,
 	listRuns,
 	listTasks,
 	readActivity,
 	readTranscript,
+	sortForPicker,
 	type ForemanActivity,
 	type ForemanRunInfo,
 	type ForemanTaskSummary,
 	type RootRow,
+	type StatuslineTask,
 	type TranscriptEvent,
 } from "./reader.ts";
 
@@ -128,14 +132,18 @@ export class ForemanDashboard extends Container implements Focusable {
 	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly done: (result: void) => void;
+	private readonly sessionId?: string;
 	private stack: DashboardView[] = [{ type: "picker" }];
+	private allTasks: ForemanTaskSummary[] = [];
 	private tasks: ForemanTaskSummary[] = [];
+	private statusTasks: StatuslineTask[] = [];
 	private rows: RootRow[] = [];
 	private runs: ForemanRunInfo[] = [];
 	private activity: ForemanActivity | null = null;
 	private transcript: TranscriptEvent[] = [];
 	private selectedTaskIndex = 0;
 	private selectedRootIndex = 0;
+	private mineOnly = false;
 	private agentScroll = 0;
 	/** In the agent view: keep retargeting to the live transcript + stick to the tail as it grows. */
 	private followLive = true;
@@ -147,12 +155,13 @@ export class ForemanDashboard extends Container implements Focusable {
 	private _focused = false;
 	private closed = false;
 
-	constructor(cwd: string, tui: TUI, theme: Theme, done: (result: void) => void, options?: { openLive?: boolean }) {
+	constructor(cwd: string, tui: TUI, theme: Theme, done: (result: void) => void, options?: { openLive?: boolean; sessionId?: string }) {
 		super();
 		this.cwd = cwd;
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
+		this.sessionId = options?.sessionId;
 		this.reloadModel();
 		if (options?.openLive) this.jumpToLiveAgent();
 		this.snapshot = this.computeSnapshot();
@@ -255,6 +264,13 @@ export class ForemanDashboard extends Container implements Focusable {
 			if (!task) return;
 			this.stack = [{ type: "picker" }, { type: "root", slug: task.slug }];
 			this.selectedRootIndex = 0;
+			this.statusMessage = "";
+			this.forceRefresh();
+			return;
+		}
+		if (data === "m") {
+			this.mineOnly = !this.mineOnly;
+			this.selectedTaskIndex = 0;
 			this.statusMessage = "";
 			this.forceRefresh();
 			return;
@@ -370,7 +386,10 @@ export class ForemanDashboard extends Container implements Focusable {
 	}
 
 	private reloadModel(): void {
-		this.tasks = listTasks(this.cwd);
+		this.statusTasks = buildStatuslineModel(this.cwd, { now: Date.now() });
+		const liveSlugs = this.statusTasks.filter((task) => task.glyph === "running").map((task) => task.slug);
+		this.allTasks = sortForPicker(listTasks(this.cwd), this.sessionId, { liveSlugs });
+		this.tasks = this.mineOnly ? this.allTasks.filter((task) => this.isMine(task)) : this.allTasks;
 		this.selectedTaskIndex = clamp(this.selectedTaskIndex, 0, Math.max(0, this.tasks.length - 1));
 
 		const slug = this.currentSlug();
@@ -409,7 +428,10 @@ export class ForemanDashboard extends Container implements Focusable {
 	private computeSnapshot(): string {
 		return JSON.stringify({
 			view: this.currentView(),
+			mineOnly: this.mineOnly,
+			allTasks: this.allTasks,
 			tasks: this.tasks,
+			statusTasks: this.statusTasks,
 			rows: this.rows,
 			runs: this.runs,
 			activity: this.activity,
@@ -422,22 +444,48 @@ export class ForemanDashboard extends Container implements Focusable {
 		this.tui.requestRender();
 	}
 
+	private isMine(task: ForemanTaskSummary): boolean {
+		return Boolean(this.sessionId && task.ownerSessionId === this.sessionId);
+	}
+
+	private ownerBadge(task: ForemanTaskSummary | undefined): string {
+		if (!task?.ownerSessionId) return this.theme.fg("dim", "—");
+		if (this.isMine(task)) return this.theme.fg("accent", "● yours");
+		return this.theme.fg("dim", `session ${task.ownerSessionId.slice(0, 6)}`);
+	}
+
+	private currentStatusTask(slug: string): StatuslineTask | undefined {
+		return this.statusTasks.find((task) => task.slug === slug);
+	}
+
+	private agentLiveSummary(slug: string, fallback: string): string {
+		const status = this.currentStatusTask(slug);
+		const parts = [fallback];
+		if (status?.liveAction) parts.push(status.liveAction);
+		const elapsed = formatElapsed(status?.elapsedMs);
+		if (elapsed) parts.push(elapsed);
+		if (status?.toolCount !== undefined) parts.push(`${status.toolCount} tool${status.toolCount === 1 ? "" : "s"}`);
+		return parts.join(" · ");
+	}
+
 	private renderPicker(width: number): string[] {
 		const height = this.viewportHeight();
+		const yours = this.allTasks.filter((task) => this.isMine(task)).length;
+		const taskSummary = `${this.allTasks.length} task${this.allTasks.length === 1 ? "" : "s"} · ${yours} yours${this.mineOnly ? " · mine only" : ""}`;
 		const header = [
-			this.borderTitle("FOREMAN", `${this.tasks.length} task${this.tasks.length === 1 ? "" : "s"}`, width),
+			this.borderTitle("FOREMAN", taskSummary, width),
 			this.theme.fg("dim", `cwd: ${this.cwd}`),
 			this.separator(width),
 		];
 		const footer = [
 			this.separator(width),
-			this.theme.fg("dim", "↑/↓ select   →/Enter open task   Esc / Ctrl+B / Ctrl+F close"),
+			this.theme.fg("dim", "↑/↓ select   →/Enter open task   m mine/all   Esc / Ctrl+B / Ctrl+F close"),
 		];
 		const bodyHeight = Math.max(1, height - header.length - footer.length);
 		const body: string[] = [];
 
 		if (this.tasks.length === 0) {
-			body.push(this.theme.fg("muted", "No Foreman ledgers found at .pi/plans."));
+			body.push(this.theme.fg("muted", this.mineOnly && this.allTasks.length > 0 ? "No Foreman tasks owned by this session." : "No Foreman ledgers found at .pi/plans."));
 		} else {
 			const start = this.windowStart(this.tasks.length, this.selectedTaskIndex, bodyHeight);
 			for (let offset = 0; offset < bodyHeight && start + offset < this.tasks.length; offset++) {
@@ -456,7 +504,7 @@ export class ForemanDashboard extends Container implements Focusable {
 		const gate2 = task?.gate2Approved ? this.theme.fg("success", "✓") : this.theme.fg("muted", "·");
 		const header = [
 			this.borderTitle("FOREMAN", `task: ${task?.slug ?? view.slug}`, width),
-			`state: ${this.colorState(task?.state ?? "unknown")}   gate1 ${gate1}   gate2 ${gate2}   round ${task?.round ?? 0}/${task?.maxRounds ?? 0}`,
+			`state: ${this.colorState(task?.state ?? "unknown")}   owner ${this.ownerBadge(task)}   gate1 ${gate1}   gate2 ${gate2}   round ${task?.round ?? 0}/${task?.maxRounds ?? 0}`,
 			`verify: ${this.theme.fg("toolOutput", task?.verifyCommand ?? "(developer/tester inferred)")}`,
 			this.separator(width),
 		];
@@ -485,7 +533,9 @@ export class ForemanDashboard extends Container implements Focusable {
 		const start = this.transcript.find((event): event is Extract<TranscriptEvent, { kind: "agent_start" }> => event.kind === "agent_start");
 		const run = this.runs.find((candidate) => candidate.file === view.file);
 		const live = this.isLiveTranscript(view.file);
-		const running = live ? this.theme.fg("accent", "● running") : this.theme.fg("muted", "○ replay");
+		const running = live
+			? this.theme.fg("accent", this.agentLiveSummary(view.slug, "● running"))
+			: this.theme.fg("muted", "○ replay");
 		const header = [
 			this.borderTitle(`← ${view.role} · round ${view.round}`, `${start?.model ?? "model?"}   ${running}`, width),
 			this.theme.fg("dim", `${view.file}${run?.sessionId ? ` · ${run.sessionId}` : ""}`),
@@ -522,7 +572,7 @@ export class ForemanDashboard extends Container implements Focusable {
 		const cursor = selected ? this.theme.fg("accent", "▶") : " ";
 		const gate1 = task.gate1Approved ? this.theme.fg("success", "g1✓") : this.theme.fg("muted", "g1·");
 		const gate2 = task.gate2Approved ? this.theme.fg("success", "g2✓") : this.theme.fg("muted", "g2·");
-		const line = `${cursor} ${this.theme.fg("accent", task.slug)}  ${this.colorState(task.state)}  r${task.round}/${task.maxRounds}  ${gate1} ${gate2}  ${this.theme.fg("text", task.task)}`;
+		const line = `${cursor} ${this.theme.fg("accent", task.slug)}  ${this.ownerBadge(task)}  ${this.colorState(task.state)}  r${task.round}/${task.maxRounds}  ${gate1} ${gate2}  ${this.theme.fg("text", task.task)}`;
 		return this.selectedLine(line, selected, width);
 	}
 

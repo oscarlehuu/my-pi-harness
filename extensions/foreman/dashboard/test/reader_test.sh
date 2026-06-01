@@ -181,7 +181,9 @@ try {
   assert.deepEqual(slModel.map((t) => t.slug), [slug], "statusline is scoped to the session's tasks");
   assert.equal(slModel[0].phase, "developer", "live crew phase comes from fresh activity.json");
   assert.equal(slModel[0].glyph, "running", "actively-spawning task uses the running glyph");
-  assert.ok(slModel[0].label.length <= 23, "task label is shortened for the footer");
+  assert.equal(slModel[0].detail, "dev", "detail names the live developer agent");
+  assert.equal(slModel[0].round, 1, "model carries the round");
+  assert.ok(slModel[0].label.length <= 37, "task label is bounded for the footer");
 
   assert.deepEqual(
     reader.buildStatuslineModel(repo, { sessionId: "nobody", now: nowMs }),
@@ -193,12 +195,17 @@ try {
   assert.equal(staleModel[0].phase, null, "stale activity is not treated as a live agent");
   assert.equal(staleModel[0].glyph, "idle", "in_progress with stale activity falls back to idle");
 
-  const slLine = reader.formatStatusline(slModel);
+  const slLine = reader.formatStatusline(slModel, { frame: 0 });
   assert.ok(slLine.startsWith("foreman "), "statusline carries the foreman prefix");
-  assert.ok(slLine.includes(":dev"), "statusline shows the live developer agent");
+  assert.ok(slLine.includes("R1 dev"), "statusline shows the round + live developer agent");
+  assert.notEqual(
+    reader.formatStatusline(slModel, { frame: 0 }),
+    reader.formatStatusline(slModel, { frame: 1 }),
+    "the live spinner animates across frames",
+  );
   assert.equal(reader.formatStatusline([]), "", "empty model clears the status line");
   assert.ok(
-    reader.formatStatusline(slModel, { color: (token, text) => `<${token}>${text}</${token}>` }).includes("<accent>"),
+    reader.formatStatusline(slModel, { color: (token, text) => `<${token}>${text}</${token}>`, frame: 0 }).includes("<accent>"),
     "format applies the injected colorizer",
   );
 

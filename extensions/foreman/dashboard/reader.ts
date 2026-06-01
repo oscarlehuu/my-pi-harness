@@ -342,6 +342,11 @@ export interface StatuslineTask {
 	/** Live crew phase from activity.json when the task is actively running, else null. */
 	phase: "developer" | "verify" | "tester" | null;
 	glyph: StatuslineGlyph;
+	/** Current round, when known (0 = not started). */
+	round: number;
+	maxRounds: number;
+	/** Short human state word for the segment (e.g. "dev", "verify", "gate", "done"). */
+	detail: string;
 }
 
 export interface StatuslineOptions {
@@ -353,17 +358,30 @@ export interface StatuslineOptions {
 	now?: number;
 }
 
-function shortLabel(task: string, slug: string, max = 22): string {
+/**
+ * Trim a task into a readable label. Foreman tasks usually start with a short title before the first
+ * "—", ".", ":" or newline (e.g. "Pimote daemon — Slice 2: …"); prefer that head so the footer shows
+ * something meaningful instead of a mid-word "…". Falls back to a word-boundary clip.
+ */
+function shortLabel(task: string, slug: string, max = 36): string {
 	const base = (task || slug).replace(/\s+/g, " ").trim();
-	if (base.length <= max) return base;
-	const clipped = base.slice(0, max);
+	const head = base.split(/\s[\u2014-]\s|[.:\n]/)[0].trim();
+	const candidate = head.length >= 6 && head.length <= max ? head : base;
+	if (candidate.length <= max) return candidate;
+	const clipped = candidate.slice(0, max);
 	const lastSpace = clipped.lastIndexOf(" ");
-	return `${(lastSpace > 8 ? clipped.slice(0, lastSpace) : clipped).trimEnd()}\u2026`;
+	return `${(lastSpace > 10 ? clipped.slice(0, lastSpace) : clipped).trimEnd()}\u2026`;
 }
 
 function livePhase(phase: ActivityPhase): "developer" | "verify" | "tester" | null {
 	return phase === "developer" || phase === "verify" || phase === "tester" ? phase : null;
 }
+
+const PHASE_LABEL: Record<"developer" | "verify" | "tester", string> = {
+	developer: "dev",
+	verify: "verify",
+	tester: "test",
+};
 
 /**
  * Build a compact, newest-first model of this session's foreman tasks for the footer statusline.
@@ -384,8 +402,36 @@ export function buildStatuslineModel(cwd: string, opts: StatuslineOptions = {}):
 		else if (t.state === "awaiting_ship" || t.state === "planning") glyph = "gate";
 		else if (phase) glyph = "running";
 		else glyph = "idle";
-		return { slug: t.slug, label: shortLabel(t.task, t.slug), state: t.state, phase, glyph };
+		return {
+			slug: t.slug,
+			label: shortLabel(t.task, t.slug),
+			state: t.state,
+			phase,
+			glyph,
+			round: t.round,
+			maxRounds: t.maxRounds,
+			detail: statusDetail(t.state, phase),
+		};
 	});
+}
+
+/** Short human word for a task segment: the live agent when running, else the state. */
+function statusDetail(state: string, phase: "developer" | "verify" | "tester" | null): string {
+	if (phase) return PHASE_LABEL[phase];
+	switch (state) {
+		case "awaiting_ship":
+			return "ship?";
+		case "planning":
+			return "plan?";
+		case "escalated":
+			return "stuck";
+		case "done":
+			return "done";
+		case "in_progress":
+			return "idle";
+		default:
+			return state;
+	}
 }
 
 const GLYPHS: Record<StatuslineGlyph, string> = {
@@ -404,33 +450,43 @@ const GLYPH_COLOR: Record<StatuslineGlyph, string> = {
 	idle: "muted",
 };
 
-const PHASE_LABEL: Record<"developer" | "verify" | "tester", string> = {
-	developer: "dev",
-	verify: "verify",
-	tester: "test",
-};
-
 export interface FormatStatuslineOptions {
-	/** Max task segments to show before collapsing the rest into a "+N" suffix. Default 4. */
+	/** Max task segments to show before collapsing the rest into a "+N" suffix. Default 3. */
 	maxTasks?: number;
 	/** Colorizer (token, text) => text. Default identity (plain text, used by tests). */
 	color?: (token: string, text: string) => string;
+	/** Animation frame for the live spinner (0..n). Lets the running task pulse. */
+	frame?: number;
 }
 
-/** Render the statusline model to a single footer line. Pure; color is injectable for tests. */
+const SPINNER = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"]; // braille dots
+
+/**
+ * Render the statusline model to a single footer line. Designed to read well, not just fit:
+ *   foreman  ⠋ Pimote daemon · R2 dev   ✓ AskUserQuestion parity
+ * Each task is `<glyph> <label> · <round> <detail>`; the live task gets a spinner + accented label.
+ * Pure; color + spinner frame are injectable for tests.
+ */
 export function formatStatusline(model: StatuslineTask[], opts: FormatStatuslineOptions = {}): string {
 	if (model.length === 0) return "";
-	const maxTasks = opts.maxTasks ?? 4;
+	const maxTasks = opts.maxTasks ?? 3;
 	const color = opts.color ?? ((_token, text) => text);
 	const shown = model.slice(0, maxTasks);
 	const segments = shown.map((t) => {
-		const glyph = color(GLYPH_COLOR[t.glyph], GLYPHS[t.glyph]);
-		const detail = t.phase ? color("muted", `:${PHASE_LABEL[t.phase]}`) : "";
-		return `${glyph} ${t.label}${detail}`;
+		const live = t.glyph === "running";
+		const glyph = live
+			? color("accent", SPINNER[(opts.frame ?? 0) % SPINNER.length])
+			: color(GLYPH_COLOR[t.glyph], GLYPHS[t.glyph]);
+		const label = color(live ? "accent" : t.glyph === "done" ? "muted" : "text", t.label);
+		// round + detail tail, e.g. "R2 dev" or "ship?"; skip round when not started
+		const roundTag = t.round > 0 && t.state !== "done" ? `R${t.round} ` : "";
+		const tail = color("muted", `${roundTag}${t.detail}`);
+		return `${glyph} ${label} ${color("dim", "\u00b7")} ${tail}`;
 	});
 	const hidden = model.length - shown.length;
-	if (hidden > 0) segments.push(color("muted", `+${hidden}`));
-	return `${color("muted", "foreman")} ${segments.join(color("muted", "  "))}`;
+	if (hidden > 0) segments.push(color("muted", `+${hidden} more`));
+	const sep = color("dim", "   ");
+	return `${color("muted", "foreman")}  ${segments.join(sep)}`;
 }
 
 /** List transcript JSONL runs, parsed from filenames and sorted chronologically. */

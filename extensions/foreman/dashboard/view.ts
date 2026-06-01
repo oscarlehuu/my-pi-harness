@@ -137,21 +137,57 @@ export class ForemanDashboard extends Container implements Focusable {
 	private selectedTaskIndex = 0;
 	private selectedRootIndex = 0;
 	private agentScroll = 0;
+	/** In the agent view: keep retargeting to the live transcript + stick to the tail as it grows. */
+	private followLive = true;
+	/** True while the agent view is scrolled to the bottom (so new lines auto-reveal). */
+	private agentAtBottom = true;
 	private statusMessage = "";
 	private snapshot = "";
 	private pollTimer: ReturnType<typeof setInterval> | null = null;
 	private _focused = false;
 	private closed = false;
 
-	constructor(cwd: string, tui: TUI, theme: Theme, done: (result: void) => void) {
+	constructor(cwd: string, tui: TUI, theme: Theme, done: (result: void) => void, options?: { openLive?: boolean }) {
 		super();
 		this.cwd = cwd;
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
 		this.reloadModel();
+		if (options?.openLive) this.jumpToLiveAgent();
 		this.snapshot = this.computeSnapshot();
 		this.pollTimer = setInterval(() => this.poll(), POLL_INTERVAL_MS);
+	}
+
+	/**
+	 * Navigate straight to the agent transcript that is running right now (newest task whose
+	 * activity.json points at a live transcript). Falls back to that task's root view, or the
+	 * picker when nothing is live. Used by the "jump to live" shortcut.
+	 */
+	private jumpToLiveAgent(): void {
+		for (const task of this.tasks) {
+			const activity = readActivity(this.cwd, task.slug);
+			if (!activity?.activeTranscript) continue;
+			const runs = listRuns(this.cwd, task.slug);
+			const liveRun = runs.find((r) => r.file === activity.activeTranscript);
+			if (!liveRun) continue;
+			this.stack = [
+				{ type: "picker" },
+				{ type: "root", slug: task.slug },
+				{ type: "agent", slug: task.slug, file: liveRun.file, role: liveRun.role, round: liveRun.round },
+			];
+			this.selectedTaskIndex = Math.max(0, this.tasks.findIndex((t) => t.slug === task.slug));
+			this.followLive = true;
+			this.agentAtBottom = true;
+			this.agentScroll = Number.MAX_SAFE_INTEGER;
+			this.reloadModel();
+			return;
+		}
+		// Nothing live: open the most-recently-updated task's root view if there is one.
+		if (this.tasks.length > 0) {
+			this.stack = [{ type: "picker" }, { type: "root", slug: this.tasks[0].slug }];
+			this.reloadModel();
+		}
 	}
 
 	get focused(): boolean {
@@ -247,8 +283,12 @@ export class ForemanDashboard extends Container implements Focusable {
 
 	private handleAgentInput(data: string): void {
 		const page = this.agentPageSize();
+		// Manual upward scrolling pauses live-follow so the user can read; reaching the bottom (or G)
+		// resumes following the running agent's tail.
 		if (matchesKey(data, Key.up)) {
 			this.agentScroll = Math.max(0, this.agentScroll - 1);
+			this.followLive = false;
+			this.agentAtBottom = false;
 			this.requestRender();
 			return;
 		}
@@ -259,6 +299,8 @@ export class ForemanDashboard extends Container implements Focusable {
 		}
 		if (matchesKey(data, Key.pageUp)) {
 			this.agentScroll = Math.max(0, this.agentScroll - page);
+			this.followLive = false;
+			this.agentAtBottom = false;
 			this.requestRender();
 			return;
 		}
@@ -269,11 +311,15 @@ export class ForemanDashboard extends Container implements Focusable {
 		}
 		if (data === "g") {
 			this.agentScroll = 0;
+			this.followLive = false;
+			this.agentAtBottom = false;
 			this.requestRender();
 			return;
 		}
 		if (data === "G") {
 			this.agentScroll = Number.MAX_SAFE_INTEGER;
+			this.followLive = true;
+			this.agentAtBottom = true;
 			this.requestRender();
 			return;
 		}
@@ -335,7 +381,22 @@ export class ForemanDashboard extends Container implements Focusable {
 		this.selectedRootIndex = clamp(this.selectedRootIndex, 0, Math.max(0, this.rows.length - 1));
 
 		const view = this.currentView();
-		this.transcript = view.type === "agent" ? readTranscript(this.cwd, view.slug, view.file) : [];
+		if (view.type === "agent") {
+			// If this open agent view is the one currently running, follow the LIVE transcript file.
+			// The loop writes a NEW transcript per phase/round, so a view pinned to the file chosen at
+			// open time would go stale (the old "Esc and re-enter to see updates" bug). When activity
+			// points at a fresh transcript for this view's role, retarget the view to it.
+			if (this.activity?.activeTranscript && this.followLive) {
+				const liveRun = this.runs.find((r) => r.file === this.activity?.activeTranscript);
+				if (liveRun && liveRun.role === view.role && this.activity.activeTranscript !== view.file) {
+					view.file = this.activity.activeTranscript;
+					view.round = liveRun.round;
+				}
+			}
+			this.transcript = readTranscript(this.cwd, view.slug, view.file);
+		} else {
+			this.transcript = [];
+		}
 	}
 
 	private computeSnapshot(): string {
@@ -425,15 +486,28 @@ export class ForemanDashboard extends Container implements Focusable {
 		];
 		const footer = [
 			this.separator(width),
-			this.theme.fg("dim", "←/Esc back   ↑/↓ scroll   PgUp/PgDn page   g/G top/bottom"),
+			this.theme.fg("dim", "←/Esc back   ↑/↓ scroll   PgUp/PgDn page   g/G top/bottom   G follows live"),
 		];
 		const content = this.renderTranscriptLines(width);
 		let bodyHeight = Math.max(1, height - header.length - footer.length);
 		if (content.length > bodyHeight) bodyHeight = Math.max(1, bodyHeight - 1);
 		const maxScroll = Math.max(0, content.length - bodyHeight);
+		// Auto-tail: while following (just opened, pressed G, or never scrolled up), stick to the
+		// bottom so a live agent's new lines appear without the user touching anything.
+		if (this.agentAtBottom) this.agentScroll = maxScroll;
 		this.agentScroll = clamp(this.agentScroll, 0, maxScroll);
+		// Re-arm follow once the user manually scrolls back to the bottom.
+		if (this.agentScroll >= maxScroll) {
+			this.agentAtBottom = true;
+			if (live) this.followLive = true;
+		}
 		const body = content.slice(this.agentScroll, this.agentScroll + bodyHeight);
-		const scrollInfo = content.length > bodyHeight ? this.theme.fg("dim", `  lines ${this.agentScroll + 1}-${Math.min(content.length, this.agentScroll + bodyHeight)}/${content.length}`) : "";
+		const atTail = this.agentScroll >= maxScroll;
+		const tailTag = live ? (atTail ? this.theme.fg("success", " following") : this.theme.fg("warning", " paused")) : "";
+		const scrollInfo =
+			content.length > bodyHeight
+				? this.theme.fg("dim", `  lines ${this.agentScroll + 1}-${Math.min(content.length, this.agentScroll + bodyHeight)}/${content.length}`) + tailTag
+				: "";
 		return [...header, ...body, scrollInfo, ...footer].filter((line) => line !== "");
 	}
 
@@ -517,6 +591,8 @@ export class ForemanDashboard extends Container implements Focusable {
 		}
 		this.stack.push({ type: "agent", slug: view.slug, file: row.transcriptFile, role: row.kind, round: row.round });
 		this.agentScroll = Number.MAX_SAFE_INTEGER;
+		this.followLive = true;
+		this.agentAtBottom = true;
 		this.statusMessage = "";
 		this.forceRefresh();
 	}

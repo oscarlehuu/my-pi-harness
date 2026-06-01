@@ -7,7 +7,8 @@ press `←` to come back. Open/minimize anytime via a keyboard shortcut.
 Founder decisions locked (do not relitigate without asking):
 1. Surface = **full navigable dashboard** (not just an inline block).
 2. **Live** — reflects work as it happens, not only post-hoc replay.
-3. Entry point = a **keyboard shortcut**: **Ctrl+B** (open / minimize).
+3. Entry point = a **keyboard shortcut**: **Ctrl+B** (open / minimize); **Ctrl+F** jumps straight to
+   the live agent. An always-on **footer statusline** (Phase C) shows live progress without opening.
 4. Capture = **full transcript** per agent (every tool call + args + output, persisted).
 5. v1 includes a **task picker** (root lists tasks → enter mission control).
 6. Transcripts are **machine-local** (not committed) for now.
@@ -186,21 +187,33 @@ signal **without opening anything**, on pi's footer status bar (`ctx.ui.setStatu
 renders extension statuses as one line, ANSI preserved, no-op when `hasUI` is false).
 
 ```
-foreman ▸ Build AskUserQuestion…:test   ✓ Foreman dashboard…
+foreman  ⠋ Pimote daemon · R2 dev   ✓ AskUserQuestion parity · done
 ```
 
 - **Scoped to the calling session.** The foreman tool runs inside the session's own process, so
   the line shows only tasks this session owns (`ownerSessionId`), newest-first. Two sessions in
   one repo each see their own work — never each other's.
-- **One segment per task:** a state glyph + a short task label. The actively-running task also
-  shows the crew agent currently spawning (`:dev` / `:verify` / `:test`, from `activity.json`).
-- **Glyphs:** `▸` running (accent) · `◆` at a gate (warning) · `✓` done (success, the green tick)
-  · `⚠` escalated · `·` idle. Overflow past 4 tasks collapses into a `+N` suffix.
-- Pushed on every phase transition and at each gate/terminal return (`done()`), so it tracks the
-  loop live. Stale `activity.json` (older than ~20s — a crashed run) is not shown as live.
+- **One segment per task:** `<glyph> <label> · <Rn> <detail>`. The label keeps the task's title
+  head (the part before the first `—`/`:`/`.`) so it reads as words, not a mid-word `…`. The
+  actively-running task shows its round and the crew agent spawning now (`dev` / `verify` / `test`,
+  from `activity.json`); finished/gated tasks show `done` / `ship?` / `plan?` / `stuck`.
+- **Live spinner:** while an agent is spawning, the running task's glyph is an animated braille
+  spinner (driven by a ~120ms ticker in `index.ts`, accent-colored). Non-live glyphs: `◆` at a gate
+  (warning) · `✓` done (success, the green tick) · `⚠` escalated · `·` idle. Overflow past 3 tasks
+  collapses into a `+N more` suffix.
+- Pushed on every phase transition and at each gate/terminal return (`done()`), plus the spinner
+  ticker during agent runs. Stale `activity.json` (older than ~20s — a crashed run) is not live.
 - **Pure model + format** live in `dashboard/reader.ts` (`buildStatuslineModel`, `formatStatusline`
-  with an injectable colorizer) so they unit-test headlessly; `index.ts` only reads `ctx.ui.theme`
-  and calls `setStatus`. The full developer/tester/verify drill-down stays in the ctrl+b dashboard.
+  with an injectable colorizer + spinner `frame`) so they unit-test headlessly; `index.ts` reads
+  `ctx.ui.theme` and calls `setStatus`.
+
+**Why not an interactive statusline?** pi's footer/widgets are render-only — keyboard focus goes to
+the editor or a `custom()` takeover, never the footer (verified in `interactive-mode`). So you can't
+arrow-key "on" the statusline. Instead, **Ctrl+F jumps straight into the live agent** transcript
+(skips picker→root), and the agent view now **follows the live run**: it retargets to the current
+phase/round's transcript as the loop advances and auto-tails new output (press `G` to re-follow
+after scrolling up). That removes the old "Esc and re-enter to see updates" friction. The full
+developer/tester/verify drill-down still lives in the ctrl+b dashboard.
 
 ---
 

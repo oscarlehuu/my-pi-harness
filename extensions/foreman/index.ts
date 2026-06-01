@@ -400,6 +400,20 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// Quick-open: jump straight into the agent transcript running right now (skips picker + root).
+	pi.registerShortcut("ctrl+f", {
+		description: "Foreman: jump to live agent",
+		handler: async (ctx) => {
+			if (!ctx.hasUI || dashboardOpen) return;
+			dashboardOpen = true;
+			try {
+				await ctx.ui.custom<void>((tui, theme, _keybindings, done) => new ForemanDashboard(ctx.cwd, tui, theme, done, { openLive: true }));
+			} finally {
+				dashboardOpen = false;
+			}
+		},
+	});
+
 	pi.registerTool({
 		name: "foreman",
 		label: "Foreman (gated dev-test-fix orchestrator)",
@@ -448,16 +462,33 @@ export default function (pi: ExtensionAPI) {
 
 			// Push this session's foreman tasks to the footer statusline (newest-first, with the live
 			// crew agent). No-op when there's no interactive UI (headless/print/RPC).
+			let statusFrame = 0;
 			const pushStatus = () => {
 				const setStatus = ctx?.ui?.setStatus;
 				if (typeof setStatus !== "function") return;
 				const theme = ctx.ui.theme;
 				const color = typeof theme?.fg === "function" ? (token: string, text: string) => theme.fg(token, text) : undefined;
 				const model = buildStatuslineModel(cwd, { sessionId });
-				const line = formatStatusline(model, { color });
+				const line = formatStatusline(model, { color, frame: statusFrame });
 				setStatus.call(ctx.ui, STATUS_KEY, line || undefined);
 			};
+			// Animate the live spinner in the footer while an agent is spawning (interactive only).
+			let spinnerTimer: ReturnType<typeof setInterval> | null = null;
+			const startSpinner = () => {
+				if (spinnerTimer || typeof ctx?.ui?.setStatus !== "function") return;
+				spinnerTimer = setInterval(() => {
+					statusFrame += 1;
+					pushStatus();
+				}, 120);
+			};
+			const stopSpinner = () => {
+				if (spinnerTimer) {
+					clearInterval(spinnerTimer);
+					spinnerTimer = null;
+				}
+			};
 			const done = () => {
+				stopSpinner();
 				pushStatus();
 				return { content: [{ type: "text", text: transcript.join("\n") }] };
 			};
@@ -554,12 +585,14 @@ export default function (pi: ExtensionAPI) {
 					ownerSessionId: sessionId,
 				});
 				pushStatus();
+				startSpinner();
 				const devRun = await runAgent(developer, devContext, cwd, {
 					role: "developer",
 					round,
 					transcriptPath: devTranscript,
 					signal,
 				});
+				stopSpinner();
 				const devBlock = extractJsonBlock(devRun.text, "---DEV-JSON---", "---END-DEV-JSON---");
 				const devHandoff: Handoff = {
 					timestamp: new Date().toISOString(),
@@ -588,7 +621,9 @@ export default function (pi: ExtensionAPI) {
 				pushStatus();
 				if (verifyCmd) {
 					emit(`Round ${round}: verify \`${verifyCmd}\`...`);
+					startSpinner();
 					const v = await runVerify(verifyCmd, cwd, signal);
+					stopSpinner();
 					verifyExit = v.exitCode;
 					verifyOutput = v.output;
 					appendLog(cwd, slug, { type: "verify_ran", round, command: verifyCmd, exitCode: verifyExit });
@@ -615,12 +650,14 @@ export default function (pi: ExtensionAPI) {
 					ownerSessionId: sessionId,
 				});
 				pushStatus();
+				startSpinner();
 				const testRun = await runAgent(tester, testerTask, cwd, {
 					role: "tester",
 					round,
 					transcriptPath: testTranscript,
 					signal,
 				});
+				stopSpinner();
 				const { successState: judged, parsedFrom } = parseVerdict(testRun.text);
 
 				// Combine ground truth (exit code) with the tester's judgment.

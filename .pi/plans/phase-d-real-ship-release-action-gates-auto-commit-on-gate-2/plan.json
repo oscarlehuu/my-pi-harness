@@ -1,0 +1,32 @@
+{
+  "summary": "Phase D makes Gate 2 ship REAL with a minimal git-commit-only action gate. Add a pure ship.ts helper module (inferCommitType, buildCommitMessage, resolveStagePaths, decideShipCommit), an optional backward-compatible paths? field on the Gate interface, and wire RELEASE-stage action gates into the awaiting_ship+approve branch of index.ts so that on approval the controller stages a SAFE scoped pathspec (handoff filesChanged + ledger dir, never the whole tree) and creates a conventional commit via argv (no shell injection). The commit is best-effort and never blocks or reverses 'done'; with no release action gate declared, behavior is byte-identical to today. A new headless ship_test.sh covers the pure helpers and is added to the verify chain alongside all existing suites.",
+  "steps": [
+    "gates.ts: add optional `paths?: string[]` to the Gate interface and, in normalizeGate's action branch ONLY, carry it through conditionally (spread only when value.paths is a non-empty string array) so gates_test.sh's deepEqual on action gates without paths still passes.",
+    "Create extensions/foreman/ship.ts (pure, node-builtins only, no pi/child_process): inferCommitType(task) => fix|feat|chore (fix if /fix|bug/i, feat if /add|implement|feature|new/i, else chore); buildCommitMessage({task,slug,track,filesChanged,reviewerSummary}) => `<type>(foreman-task): <summary>` subject (<=72 chars, first meaningful task line) + body with deduped filesChanged bullets, a 'Shipped via Foreman (slug, track)' line, and reviewerSummary if present; resolveStagePaths({gatePaths,filesChanged,ledgerRelDir}) => use gatePaths verbatim if non-empty, else leading path token of each filesChanged entry (split on ' - '/' ') deduped PLUS ledgerRelDir, never '-A'/'.'/':', empty => [ledgerRelDir]; decideShipCommit({isGitRepo,hasReleaseCommitGate,stagedCount}) => commit only when all true & stagedCount>0 else {commit:false, reason}.",
+    "Wire index.ts at the `state.state===\"awaiting_ship\"` + `params.approve` branch (index.ts:988-995): after approval select gatesForStage(gates,'release').filter(g=>g.kind==='action'); if empty, keep today's exact behavior. For action==='commit': read developer handoffs (listHandoffs -> JSON.parse each under taskDir/handoffs, role==='developer') and collect filesChanged; compute stagePaths via resolveStagePaths (gate.paths override); add a local async git runner using spawn(arg-array, shell:false); run `git rev-parse --is-inside-work-tree`, `git add -- <stagePaths>`, count `git diff --cached --name-only`; if decideShipCommit.commit, buildCommitMessage and `git commit -m <subject> -m <body>` then capture `git rev-parse HEAD`. Unknown action => appendLog+skip. ALWAYS mark done first/regardless; report SHA or skip/why reason in emit and appendLog (release_commit_ran with sha/decision); catch git errors (non-fatal).",
+    "Create extensions/foreman/test/ship_test.sh mirroring planner_test.sh/gates_test.sh: assert inferCommitType cases (fix/feat/chore), buildCommitMessage subject format/length + body contains filesChanged bullets and slug + determinism, resolveStagePaths (gatePaths wins; else leading tokens + ledgerRelDir deduped; empty => [ledgerRelDir]; never -A/./:), and decideShipCommit truth table with correct reasons.",
+    "Run the full suite (ship_test.sh + all existing suites) to confirm no regressions, especially gates_test.sh (paths backward-compat) and gate_flow_test.sh (no release gate => done with no commit side-effects)."
+  ],
+  "filesLikely": [
+    "extensions/foreman/ship.ts",
+    "extensions/foreman/index.ts",
+    "extensions/foreman/gates.ts",
+    "extensions/foreman/test/ship_test.sh"
+  ],
+  "risks": [
+    "gates_test.sh step 1 deepEquals action gates that have no `paths`; normalizeGate must add `paths` only when present or the existing assertion breaks.",
+    "Backward compat: gate_flow_test.sh's temp repo has no .pi/foreman.json (legacy verify gate only), so release-action selection must be empty and Gate 2 must stay identical (done, no commit, protected-fixture hash unchanged).",
+    "Safety: resolveStagePaths must NEVER yield -A/./: and the commit message must be passed as argv (spawn shell:false) to avoid sweeping concurrent sessions' files or shell injection.",
+    "Commit must be strictly best-effort: any git failure is caught/reported and must never block or reverse state='done'.",
+    "reviewerSummary is not cleanly in scope at the awaiting_ship resume path (reviewer handoffs are stored as role:'tester'); pass last tester summary or undefined — buildCommitMessage treats it as optional.",
+    "ship_test.sh does not exist yet; it is a deliverable and is added to the verify chain (controller legacy fallback already lists it first). proposedGates reflects the existing .pi/foreman.json verify gate and does not overwrite the file; appending ship_test.sh to that gate is an intended in-task edit, not an auto-overwrite."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    }
+  ]
+}

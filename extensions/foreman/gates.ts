@@ -20,6 +20,8 @@ export interface Gate {
 	command?: string;
 	agent?: string;
 	action?: string;
+	/** Optional pathspec override for release action gates such as `commit`. */
+	paths?: string[];
 }
 
 export interface CommandGateResult {
@@ -54,6 +56,12 @@ function isGateStage(value: unknown): value is GateStage {
 	return typeof value === "string" && VALID_STAGES.has(value as GateStage);
 }
 
+function normalizePaths(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const paths = value.filter(isNonEmptyString).map((p) => p.trim()).filter(Boolean);
+	return paths.length ? paths : undefined;
+}
+
 function normalizeGate(value: unknown): Gate | null {
 	if (!isRecord(value)) return null;
 	const { name, kind, stage } = value;
@@ -68,7 +76,8 @@ function normalizeGate(value: unknown): Gate | null {
 		return { name, kind, stage, agent: value.agent };
 	}
 	if (!isNonEmptyString(value.action)) return null;
-	return { name, kind, stage, action: value.action };
+	const paths = normalizePaths(value.paths);
+	return paths ? { name, kind, stage, action: value.action, paths } : { name, kind, stage, action: value.action };
 }
 
 /**

@@ -60,6 +60,7 @@ import {
 	validatePlannerPlan,
 } from "./planner.ts";
 import { decideReviewOutcome, parseReviewVerdict, type ReviewVerdict } from "./reviewer.ts";
+import { buildCommitMessage, decideShipCommit, resolveStagePaths } from "./ship.ts";
 
 // Stronger model the frontend track falls back to when Gemini fails to drive the tools.
 const UI_FALLBACK_MODEL = "cliproxy/claude-opus-4-8:xhigh";
@@ -697,6 +698,194 @@ function writeProposedManifestOnGate1Approval(cwd: string, draft: PersistedPlann
 	return { wrote: true, reason: decision.reason };
 }
 
+interface GitRunResult {
+	exitCode: number;
+	stdout: string;
+	stderr: string;
+}
+
+interface ShipHandoffContext {
+	filesChanged: string[];
+	reviewerSummary?: string;
+}
+
+const GIT_OUTPUT_CAP = 20 * 1024;
+
+function capGitOutput(value: string): string {
+	return value.length > GIT_OUTPUT_CAP ? value.slice(-GIT_OUTPUT_CAP) : value;
+}
+
+function runGit(cwd: string, args: string[], signal?: AbortSignal): Promise<GitRunResult> {
+	return new Promise((resolve) => {
+		let stdout = "";
+		let stderr = "";
+		let settled = false;
+		let proc: ReturnType<typeof spawn>;
+		let removeAbortListener: (() => void) | undefined;
+		const finish = (exitCode: number) => {
+			if (settled) return;
+			settled = true;
+			removeAbortListener?.();
+			resolve({ exitCode, stdout: capGitOutput(stdout), stderr: capGitOutput(stderr) });
+		};
+
+		try {
+			proc = spawn("git", args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+		} catch (error) {
+			resolve({ exitCode: 1, stdout: "", stderr: String(error) });
+			return;
+		}
+
+		proc.stdout.on("data", (data: Buffer) => {
+			stdout = capGitOutput(stdout + data.toString());
+		});
+		proc.stderr.on("data", (data: Buffer) => {
+			stderr = capGitOutput(stderr + data.toString());
+		});
+		proc.on("close", (code) => finish(code ?? (signal?.aborted ? 1 : 0)));
+		proc.on("error", (error) => {
+			stderr += String(error);
+			finish(1);
+		});
+		if (signal) {
+			const onAbort = () => proc.kill("SIGTERM");
+			signal.addEventListener("abort", onAbort, { once: true });
+			removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+		}
+	});
+}
+
+function gitErrorSummary(command: string, result: GitRunResult): string {
+	const detail = (result.stderr || result.stdout || `${command} exited ${result.exitCode}`).trim();
+	return `${command} failed (exit ${result.exitCode})${detail ? `: ${detail.slice(-500)}` : ""}`;
+}
+
+function stagedFileCount(gitDiffNameOnlyOutput: string): number {
+	return gitDiffNameOnlyOutput.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length;
+}
+
+function commitMessageParts(message: string): { subject: string; body: string } {
+	const lines = message.split(/\r?\n/);
+	const subject = (lines.shift() ?? "").trim() || "chore(foreman-task): ship task";
+	const body = lines.join("\n").trim() || "Shipped via Foreman.";
+	return { subject, body };
+}
+
+function readShipHandoffContext(cwd: string, slug: string): ShipHandoffContext {
+	const filesChanged: string[] = [];
+	const reviewerSummaries: string[] = [];
+	for (const fname of listHandoffs(cwd, slug)) {
+		try {
+			const handoff = JSON.parse(fs.readFileSync(path.join(taskDir(cwd, slug), "handoffs", fname), "utf-8")) as Partial<Handoff>;
+			if (handoff.role === "developer" && Array.isArray(handoff.filesChanged)) {
+				filesChanged.push(...handoff.filesChanged.filter((file): file is string => typeof file === "string"));
+			}
+			if (handoff.role === "tester" && typeof handoff.summary === "string" && handoff.summary.startsWith("[reviewer]")) {
+				reviewerSummaries.push(handoff.summary);
+			}
+		} catch {
+			// Handoffs are controller-owned but still best-effort for release metadata; skip corrupt files.
+		}
+	}
+	return {
+		filesChanged,
+		reviewerSummary: reviewerSummaries.length ? reviewerSummaries.join("; ") : undefined,
+	};
+}
+
+async function runReleaseCommitGate(input: {
+	cwd: string;
+	slug: string;
+	state: LedgerState;
+	track: Track;
+	gate: Gate;
+	signal?: AbortSignal;
+}): Promise<string> {
+	const ledgerRelDir = path.relative(input.cwd, taskDir(input.cwd, input.slug)) || path.join(".pi", "plans", input.slug);
+	const handoffContext = readShipHandoffContext(input.cwd, input.slug);
+	const stagePaths = resolveStagePaths({ gatePaths: input.gate.paths, filesChanged: handoffContext.filesChanged, ledgerRelDir });
+	appendLog(input.cwd, input.slug, { type: "release_commit_started", gate: input.gate.name, stagePaths });
+
+	const logCommitResult = (payload: Record<string, unknown>) => {
+		appendLog(input.cwd, input.slug, { type: "release_commit_ran", gate: input.gate.name, action: "commit", stagePaths, ...payload });
+	};
+
+	try {
+		const repoCheck = await runGit(input.cwd, ["rev-parse", "--is-inside-work-tree"], input.signal);
+		const isGitRepo = repoCheck.exitCode === 0 && repoCheck.stdout.trim() === "true";
+		if (!isGitRepo) {
+			const decision = decideShipCommit({ isGitRepo, hasReleaseCommitGate: true, stagedCount: 0 });
+			logCommitResult({ decision, isGitRepo, stagedCount: 0 });
+			return `- ${input.gate.name}: SKIPPED (${decision.reason})`;
+		}
+
+		const add = await runGit(input.cwd, ["add", "--", ...stagePaths], input.signal);
+		if (add.exitCode !== 0) {
+			const error = gitErrorSummary("git add", add);
+			logCommitResult({ decision: { commit: false, reason: error }, isGitRepo, stagedCount: 0, error });
+			return `- ${input.gate.name}: ERROR (${error})`;
+		}
+
+		const diff = await runGit(input.cwd, ["diff", "--cached", "--name-only"], input.signal);
+		if (diff.exitCode !== 0) {
+			const error = gitErrorSummary("git diff --cached --name-only", diff);
+			logCommitResult({ decision: { commit: false, reason: error }, isGitRepo, stagedCount: 0, error });
+			return `- ${input.gate.name}: ERROR (${error})`;
+		}
+
+		const stagedCount = stagedFileCount(diff.stdout);
+		const decision = decideShipCommit({ isGitRepo, hasReleaseCommitGate: true, stagedCount });
+		if (!decision.commit) {
+			logCommitResult({ decision, isGitRepo, stagedCount });
+			return `- ${input.gate.name}: SKIPPED (${decision.reason})`;
+		}
+
+		const message = buildCommitMessage({
+			task: input.state.task,
+			slug: input.slug,
+			track: input.track,
+			filesChanged: handoffContext.filesChanged,
+			reviewerSummary: handoffContext.reviewerSummary,
+		});
+		const { subject, body } = commitMessageParts(message);
+		const commit = await runGit(input.cwd, ["commit", "-m", subject, "-m", body], input.signal);
+		if (commit.exitCode !== 0) {
+			const error = gitErrorSummary("git commit", commit);
+			logCommitResult({ decision, isGitRepo, stagedCount, error });
+			return `- ${input.gate.name}: ERROR (${error})`;
+		}
+
+		const head = await runGit(input.cwd, ["rev-parse", "HEAD"], input.signal);
+		const sha = head.exitCode === 0 ? head.stdout.trim() : undefined;
+		logCommitResult({ decision, isGitRepo, stagedCount, sha });
+		return `- ${input.gate.name}: COMMITTED${sha ? ` ${sha}` : " (sha unavailable)"}`;
+	} catch (error) {
+		const message = String(error);
+		logCommitResult({ decision: { commit: false, reason: message }, stagedCount: 0, error: message });
+		return `- ${input.gate.name}: ERROR (${message})`;
+	}
+}
+
+async function runReleaseActionGates(input: {
+	cwd: string;
+	slug: string;
+	state: LedgerState;
+	track: Track;
+	gates: Gate[];
+	signal?: AbortSignal;
+}): Promise<string[]> {
+	const results: string[] = [];
+	for (const gate of input.gates) {
+		if (gate.action !== "commit") {
+			appendLog(input.cwd, input.slug, { type: "release_action_skipped", gate: gate.name, action: gate.action, reason: "unknown action" });
+			results.push(`- ${gate.name}: SKIPPED (unknown action: ${gate.action ?? "(missing)"})`);
+			continue;
+		}
+		results.push(await runReleaseCommitGate({ ...input, gate }));
+	}
+	return results;
+}
+
 const LoopParams = {
 	type: "object",
 	properties: {
@@ -991,7 +1180,12 @@ export default function (pi: ExtensionAPI) {
 					writeState(cwd, state);
 					appendLog(cwd, slug, { type: "gate2_approved" });
 					appendLog(cwd, slug, { type: "task_done", round: state.round });
-					emit(`SHIPPED. Task done. Ledger: ${path.relative(cwd, taskDir(cwd, slug))}`);
+					const releaseActionGates = gatesForStage(gates, "release").filter((gate) => gate.kind === "action");
+					const releaseResults = releaseActionGates.length
+						? await runReleaseActionGates({ cwd, slug, state, track, gates: releaseActionGates, signal })
+						: [];
+					const releaseSummary = releaseResults.length ? `\nRelease actions:\n${releaseResults.join("\n")}` : "";
+					emit(`SHIPPED. Task done. Ledger: ${path.relative(cwd, taskDir(cwd, slug))}${releaseSummary}`);
 					return done();
 				} else {
 					emit(

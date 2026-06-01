@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-01T10:55:36.948Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "12f46d53-988b-4e31-960f-82cfc10bcb47",
+  "successState": "success",
+  "summary": "I'll do real recon on the deliverables.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll do real recon on the deliverables.\nship.ts and ship_test.sh look complete and correct. Now let me verify the index.ts wiring and gates.ts change.\nLet me read the full wiring in index.ts and the gates.ts normalizeGate paths handling.\ngates.ts paths handling is correct (only for action gates, backward-compatible). Let me read the rest of runReleaseActionGates and the Gate 2 wiring block, plus the runGit helper.\nWiring is correct: spawn with shell:false, argv message args (no injection), best-effort with done() always reached. Let me run the new test and the backward-compat gate flow test.\nBackward-compat passes. Let me confirm no push/branch/PR and run the full verify command.\nAll suites pass. Let me confirm minimal blast radius via git diff."
+}

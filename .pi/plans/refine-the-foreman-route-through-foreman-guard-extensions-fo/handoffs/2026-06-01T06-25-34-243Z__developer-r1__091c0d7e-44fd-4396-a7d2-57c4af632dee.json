@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-06-01T06:25:34.243Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "091c0d7e-44fd-4396-a7d2-57c4af632dee",
+  "summary": "(no structured summary)",
+  "raw": "Plan ready for this guard refinement. Approve to proceed?\n\n- Scope: `extensions/foreman/guard.ts`, `extensions/foreman/index.ts`, `extensions/foreman/test/guard_test.sh`\n- Verify: `bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh`\n\nIf approved, I’ll run the foreman implementation/test loop."
+}

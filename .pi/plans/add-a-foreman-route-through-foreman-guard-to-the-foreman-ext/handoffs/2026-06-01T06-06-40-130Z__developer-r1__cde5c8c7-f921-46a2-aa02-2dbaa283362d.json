@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-06-01T06:06:40.130Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "cde5c8c7-f921-46a2-aa02-2dbaa283362d",
+  "summary": "Added a Foreman main-session edit guard with natural redirect messaging, a /foreman-direct session toggle, and FOREMAN_CREW exemptions for Foreman/subagent subprocesses. Added guard classifier tests and verified existing Foreman fast tests still pass.",
+  "filesChanged": [
+    "extensions/foreman/guard.ts - new pure route-through-foreman classifier",
+    "extensions/foreman/index.ts - registers tool_call guard, direct-mode command, and crew env marker",
+    "extensions/subagent/index.ts - passes FOREMAN_CREW=1 to spawned subagents",
+    "extensions/foreman/test/guard_test.sh - new hermetic guard tests"
+  ],
+  "howToVerify": "cd /Users/a1241968/Desktop/Oscar/my-pi-harness && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh",
+  "raw": "## Completed\nImplemented the Foreman route-through-foreman guard with crew/subagent exemptions, direct-mode escape hatch, and classifier tests.\n\n## Files Changed\n- `extensions/foreman/guard.ts` - new pure `classifyToolCall()` guard classifier.\n- `extensions/foreman/index.ts` - registers `tool_call` guard, `/foreman-direct`, and `FOREMAN_CREW=1` for Foreman crew subprocesses.\n- `extensions/subagent/index.ts` - passes `FOREMAN_CREW=1` into spawned subagents.\n- `extensions/foreman/test/guard_test.sh` - new hermetic guard classifier tests.\n\n## How To Verify\n`cd /Users/a1241968/Desktop/Oscar/my-pi-harness && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh`\n\n## Notes\nAlso smoke-tested extension loading, crew env bypass, direct-mode bypass, and `gate_flow_test.sh`.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n\n---DEV-JSON---\n{\n  \"summary\": \"Added a Foreman main-session edit guard with natural redirect messaging, a /foreman-direct session toggle, and FOREMAN_CREW exemptions for Foreman/subagent subprocesses. Added guard classifier tests and verified existing Foreman fast tests still pass.\",\n  \"filesChanged\": [\n    \"extensions/foreman/guard.ts - new pure route-through-foreman classifier\",\n    \"extensions/foreman/index.ts - registers tool_call guard, direct-mode command, and crew env marker\",\n    \"extensions/subagent/index.ts - passes FOREMAN_CREW=1 to spawned subagents\",\n    \"extensions/foreman/test/guard_test.sh - new hermetic guard tests\"\n  ],\n  \"howToVerify\": \"cd /Users/a1241968/Desktop/Oscar/my-pi-harness && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh\"\n}\n---END-DEV-JSON---"
+}

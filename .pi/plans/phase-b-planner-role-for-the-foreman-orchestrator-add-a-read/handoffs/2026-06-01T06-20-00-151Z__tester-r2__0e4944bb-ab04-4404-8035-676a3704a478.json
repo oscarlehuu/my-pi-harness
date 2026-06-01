@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-01T06:20:00.151Z",
+  "role": "tester",
+  "round": 2,
+  "sessionId": "0e4944bb-ab04-4404-8035-676a3704a478",
+  "successState": "success",
+  "summary": "I'll investigate the repository to judge whether the work satisfies the task.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll investigate the repository to judge whether the work satisfies the task.\nNow let me check how the planner is wired into the orchestrator (index.ts) for Gate 1 and fallback.\nLet me read the key wiring sections of index.ts.\nNow let me see the Gate 1 wiring/approval flow and where the manifest is written on approval.\nLet me see the Gate 1 approval branch (above line 710) where the manifest write happens on approval.\nThe wiring looks complete and correct. Now let me verify constraints: no changes to gates.ts/ActivityPhase/dashboard/schema, and confirm tests pass plus the planner agent is read-only.\nAll checks confirm the work is genuine:\n\n- **Read-only planner agent** at `crew/planner.md` with `tools: read, grep, find, ls` and explicit read-only rules.\n- **Wired into Gate 1 with fallback**: `draftPlannerPlan` (index.ts:448) loads the planner agent and falls back to the deterministic template on agent-unavailable, timeout, non-zero exit, or invalid PLAN-JSON.\n- **Parse/persist PLAN-JSON**: `parsePlannerPlanJson`, `writePersistedPlannerPlan`/`readPersistedPlannerPlan`.\n- **Founder render** with summary/steps/risks/proposed gates/manifest (`renderFounderPlan`).\n- **Manifest write only on Gate 1 approval when absent**: `writeProposedManifestOnGate1Approval` gated by `decideManifestWrite` + `hasForemanManifest`, called only in the `params.approve` branch (index.ts:701).\n- **Pure helpers** isolated in `planner.ts` (node-builtin only) with real assertion coverage in `planner_test.sh` (parse, validate, fallback, decision, render, round-trip — not hardcoded).\n- **Constraints honored**: no changes to `gates.ts` or `dashboard/`; no ActivityPhase/schema edits in the index.ts diff.\n\nTests genuinely exercise logic and pass independently.\n\nVERDICT: PASS"
+}

@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-01T07:26:33.256Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "8039afd5-4180-4a4d-9167-b79b69ba78d1",
+  "successState": "success",
+  "summary": "(no summary)",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "Foreman planner helper tests passed\nForeman gate pipeline tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": ""
+}

@@ -17,6 +17,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { classifyToolCall } from "./guard.ts";
 import {
 	type Handoff,
 	type LedgerState,
@@ -45,9 +46,21 @@ import {
 	loadGates,
 	runCommandGates,
 } from "./gates.ts";
+import {
+	type PlannerPlan,
+	type PlannerSource,
+	PLAN_JSON_END,
+	PLAN_JSON_START,
+	decideManifestWrite,
+	fallbackPlannerPlan,
+	renderFounderPlan,
+	serializePlannerPlan,
+	validatePlannerPlan,
+} from "./planner.ts";
 
 // Stronger model the frontend track falls back to when Gemini fails to drive the tools.
 const UI_FALLBACK_MODEL = "cliproxy/claude-opus-4-8:xhigh";
+const PLANNER_TIMEOUT_MS = Math.max(1000, Number(process.env.FOREMAN_PLANNER_TIMEOUT_MS ?? 30000) || 30000);
 
 // Durable out-of-tree ledger mirror: survives `git clean`/reset/crash inside any target repo.
 // Resolve the location from pi's agent dir and publish it via env so the ledger module finds it even
@@ -93,7 +106,7 @@ interface RunResult {
 	stderr: string;
 }
 
-type AgentRole = "developer" | "tester";
+type AgentRole = "planner" | "developer" | "tester";
 
 interface RunAgentOptions {
 	role: AgentRole;
@@ -209,7 +222,12 @@ async function runAgent(agent: AgentDef, task: string, cwd: string, options: Run
 	let wasAborted = false;
 	const exitCode = await new Promise<number>((resolve) => {
 		const inv = piInvocation(args);
-		const proc = spawn(inv.command, inv.args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+		const proc = spawn(inv.command, inv.args, {
+			cwd,
+			shell: false,
+			stdio: ["ignore", "pipe", "pipe"],
+			env: { ...process.env, FOREMAN_CREW: "1" },
+		});
 		let buffer = "";
 
 		const recordToolCall = (id: unknown, name: unknown, toolArgs: unknown) => {
@@ -377,6 +395,213 @@ function formatCommandGateResults(results: CommandGateResult[], outputCapPerGate
 		.join("\n\n");
 }
 
+function foremanManifestPath(cwd: string): string {
+	return path.join(cwd, ".pi", "foreman.json");
+}
+
+function hasForemanManifest(cwd: string): boolean {
+	return fs.existsSync(foremanManifestPath(cwd));
+}
+
+function plannerPlanPath(cwd: string, slug: string): string {
+	return path.join(taskDir(cwd, slug), "plan.json");
+}
+
+function plannerPlanMetaPath(cwd: string, slug: string): string {
+	return path.join(taskDir(cwd, slug), "plan.meta.json");
+}
+
+interface PersistedPlannerDraft {
+	source: Extract<PlannerSource, "planner" | "fallback">;
+	plan: PlannerPlan;
+	note?: string;
+}
+
+function isPersistedPlannerSource(value: unknown): value is PersistedPlannerDraft["source"] {
+	return value === "planner" || value === "fallback";
+}
+
+function readPersistedPlannerDraft(cwd: string, slug: string): PersistedPlannerDraft | null {
+	try {
+		const p = plannerPlanPath(cwd, slug);
+		if (!fs.existsSync(p)) return null;
+		const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
+		// Backward compatibility for the first planner rollout, which wrapped the plan with metadata.
+		const wrappedPlan = parsed && typeof parsed === "object" && "plan" in parsed ? validatePlannerPlan((parsed as any).plan) : null;
+		const plan = wrappedPlan ?? validatePlannerPlan(parsed);
+		if (!plan) return null;
+
+		let source: PersistedPlannerDraft["source"] | undefined;
+		let note: string | undefined;
+		if (parsed && typeof parsed === "object" && "plan" in parsed) {
+			source = isPersistedPlannerSource((parsed as any).source) ? (parsed as any).source : undefined;
+			note = typeof (parsed as any).note === "string" ? (parsed as any).note : undefined;
+		}
+		const metaPath = plannerPlanMetaPath(cwd, slug);
+		if (fs.existsSync(metaPath)) {
+			const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+			if (isPersistedPlannerSource(meta?.source)) source = meta.source;
+			if (typeof meta?.note === "string") note = meta.note;
+		}
+		return { source: source ?? "fallback", plan, note };
+	} catch {
+		return null;
+	}
+}
+
+function writePersistedPlannerDraft(cwd: string, slug: string, draft: PersistedPlannerDraft): void {
+	fs.writeFileSync(plannerPlanPath(cwd, slug), `${serializePlannerPlan(draft.plan)}\n`);
+	fs.writeFileSync(
+		plannerPlanMetaPath(cwd, slug),
+		`${JSON.stringify({ source: draft.source, note: draft.note }, null, 2)}\n`,
+	);
+}
+
+function plannerTaskFor(context: {
+	task: string;
+	cwd: string;
+	track: Track;
+	verifyCommand?: string;
+	manifestExists: boolean;
+	existingGates: Gate[];
+}): string {
+	const gateLines = context.existingGates.length
+		? context.existingGates.map((gate) => `- ${commandGateLabel(gate)} [${gate.stage}/${gate.kind}]`).join("\n")
+		: "- (none)";
+	return [
+		"Draft the Foreman Gate 1 plan for this task. You are read-only; inspect the repo for structure, language, tests, and existing commands, and do not edit files.",
+		`Task: ${context.task}`,
+		`Working directory: ${context.cwd}`,
+		`Track: ${context.track}`,
+		`Legacy verify command (controller fallback only; do not propose unless verified in repo): ${context.verifyCommand ?? "(none)"}`,
+		`.pi/foreman.json exists: ${context.manifestExists ? "yes" : "no"}`,
+		"Currently resolved gates:",
+		gateLines,
+		"",
+		"Return a concise plan and exactly one PLAN-JSON block with keys summary, steps, filesLikely, risks, proposedGates. Propose only commands you verified actually exist in this repo; if no .pi/foreman.json exists and no real command is detectable, proposedGates must be empty. Do not copy the legacy verify command into proposedGates unless you verified it is a real repo command. If .pi/foreman.json exists, reflect existing gates and do not propose overwriting it.",
+	].join("\n");
+}
+
+async function draftPlannerPlan(input: {
+	cwd: string;
+	slug: string;
+	task: string;
+	track: Track;
+	maxRounds: number;
+	verifyCommand?: string;
+	developerModel?: string;
+	testerModel?: string;
+	existingGates: Gate[];
+	manifestExists: boolean;
+	ownerSessionId?: string;
+	signal?: AbortSignal;
+}): Promise<PersistedPlannerDraft> {
+	const fallback = () =>
+		fallbackPlannerPlan({
+			task: input.task,
+			cwd: input.cwd,
+			track: input.track,
+			maxRounds: input.maxRounds,
+			verifyCommand: input.verifyCommand,
+			developerModel: input.developerModel,
+			testerModel: input.testerModel,
+			manifestExists: input.manifestExists,
+			existingGates: input.existingGates,
+		});
+
+	let planner: AgentDef;
+	try {
+		planner = loadAgent("planner");
+	} catch (error) {
+		const note = `planner agent unavailable: ${String(error)}`;
+		writeActivity(input.cwd, input.slug, {
+			round: 0,
+			phase: "idle",
+			activeTranscript: null,
+			note: `planner fallback: ${note}`,
+			pid: process.pid,
+			ownerSessionId: input.ownerSessionId,
+		});
+		return { plan: fallback(), source: "fallback", note };
+	}
+
+	const plannerSession = randomUUID();
+	const transcriptPath = transcriptFilePath(input.cwd, input.slug, "planner", 0, plannerSession);
+	const transcriptName = path.basename(transcriptPath);
+	writeActivity(input.cwd, input.slug, {
+		round: 0,
+		phase: "developer",
+		activeTranscript: transcriptName,
+		note: "planner running…",
+		pid: process.pid,
+		ownerSessionId: input.ownerSessionId,
+	});
+	const controller = new AbortController();
+	let timedOut = false;
+	let finalActivityNote = "planner finished";
+	const timer = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, PLANNER_TIMEOUT_MS);
+	const abortPlanner = () => controller.abort();
+	input.signal?.addEventListener("abort", abortPlanner, { once: true });
+	try {
+		const run = await runAgent(planner, plannerTaskFor(input), input.cwd, {
+			role: "planner",
+			round: 0,
+			transcriptPath,
+			signal: controller.signal,
+		});
+		if (timedOut) {
+			const note = `planner timed out after ${PLANNER_TIMEOUT_MS}ms`;
+			finalActivityNote = `planner fallback: ${note}`;
+			return { plan: fallback(), source: "fallback", note };
+		}
+		if (run.exitCode !== 0) {
+			const note = `planner exited ${run.exitCode}`;
+			finalActivityNote = `planner fallback: ${note}`;
+			return { plan: fallback(), source: "fallback", note };
+		}
+		const parsedJson = extractJsonBlock(run.text, PLAN_JSON_START, PLAN_JSON_END);
+		const parsed = validatePlannerPlan(parsedJson);
+		if (!parsed) {
+			const note = "planner emitted invalid PLAN-JSON";
+			finalActivityNote = `planner fallback: ${note}`;
+			return { plan: fallback(), source: "fallback", note };
+		}
+		finalActivityNote = "planner complete";
+		return { plan: parsed, source: "planner" };
+	} catch (error) {
+		const note = `planner failed: ${String(error)}`;
+		finalActivityNote = `planner fallback: ${note}`;
+		return { plan: fallback(), source: "fallback", note };
+	} finally {
+		clearTimeout(timer);
+		input.signal?.removeEventListener("abort", abortPlanner);
+		writeActivity(input.cwd, input.slug, {
+			round: 0,
+			phase: "idle",
+			activeTranscript: transcriptName,
+			note: finalActivityNote,
+			pid: process.pid,
+			ownerSessionId: input.ownerSessionId,
+		});
+	}
+}
+
+function writeProposedManifestOnGate1Approval(cwd: string, draft: PersistedPlannerDraft): { wrote: boolean; reason: string } {
+	const decision = decideManifestWrite({
+		manifestExists: hasForemanManifest(cwd),
+		proposedGates: draft.plan.proposedGates,
+		source: draft.source,
+	});
+	if (!decision.shouldWrite || !decision.manifest) return { wrote: false, reason: decision.reason };
+	const manifestPath = foremanManifestPath(cwd);
+	fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+	fs.writeFileSync(manifestPath, `${JSON.stringify(decision.manifest, null, 2)}\n`);
+	return { wrote: true, reason: decision.reason };
+}
+
 const LoopParams = {
 	type: "object",
 	properties: {
@@ -394,8 +619,49 @@ const LoopParams = {
 } as const;
 
 let dashboardOpen = false;
+let directMode = false;
+
+const DIRECT_STATUS_KEY = "foreman-direct";
+
+function findGitRoot(startPath: string): string | null {
+	let dir = path.resolve(startPath);
+	while (true) {
+		if (fs.existsSync(path.join(dir, ".git"))) return dir;
+		const parent = path.dirname(dir);
+		if (parent === dir) return null;
+		dir = parent;
+	}
+}
+
+function foremanScratchDirs(): string[] {
+	return [os.tmpdir(), process.env.TMPDIR, "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"].filter((dir): dir is string => Boolean(dir));
+}
 
 export default function (pi: ExtensionAPI) {
+	pi.on("tool_call", (event, ctx) => {
+		if (process.env.FOREMAN_CREW === "1" || directMode) return undefined;
+		const classification = classifyToolCall(
+			{ toolName: event.toolName, input: event.input },
+			{ cwd: ctx.cwd, findRepoRoot: findGitRoot, scratchDirs: foremanScratchDirs() },
+		);
+		if (!classification.gate) return undefined;
+		return { block: true, reason: classification.reason };
+	});
+
+	pi.registerCommand("foreman-direct", {
+		description: "Toggle Foreman direct-edit escape hatch for this session.",
+		handler: async (_args, ctx) => {
+			directMode = !directMode;
+			if (directMode) {
+				ctx.ui?.setStatus?.(DIRECT_STATUS_KEY, "⚠ foreman direct-edit mode ON");
+				ctx.ui?.notify?.("Foreman direct-edit mode ON: main-session edits are allowed for this session.", "warning");
+			} else {
+				ctx.ui?.setStatus?.(DIRECT_STATUS_KEY, undefined);
+				ctx.ui?.notify?.("Foreman direct-edit mode OFF: implementation routes through Foreman.", "info");
+			}
+		},
+	});
+
 	pi.registerShortcut("ctrl+b", {
 		description: "Foreman dashboard",
 		handler: async (ctx) => {
@@ -470,17 +736,24 @@ export default function (pi: ExtensionAPI) {
 				onUpdate?.({ content: [{ type: "text", text: transcript.join("\n") }] });
 			};
 			const verifyCommand = state.verifyCommand ?? params.verifyCommand;
-			const gates = loadGates(cwd, state.verifyCommand ?? params.verifyCommand);
-			const perRoundCommandGates = gatesForStage(gates, "per-round").filter((gate) => gate.kind === "command" && gate.command);
-			const perRoundGateSummary = perRoundCommandGates.length
-				? perRoundCommandGates.map(commandGateLabel).join(", ")
-				: "(none; tester will infer the project's tests)";
-			const isLegacyVerifyGate = Boolean(
-				verifyCommand &&
-					perRoundCommandGates.length === 1 &&
-					perRoundCommandGates[0].name === "verify" &&
-					perRoundCommandGates[0].command === verifyCommand,
-			);
+			let gates: Gate[] = [];
+			let perRoundCommandGates: Gate[] = [];
+			let perRoundGateSummary = "";
+			let isLegacyVerifyGate = false;
+			const refreshGates = () => {
+				gates = loadGates(cwd, state.verifyCommand ?? params.verifyCommand);
+				perRoundCommandGates = gatesForStage(gates, "per-round").filter((gate) => gate.kind === "command" && gate.command);
+				perRoundGateSummary = perRoundCommandGates.length
+					? perRoundCommandGates.map(commandGateLabel).join(", ")
+					: "(none; tester will infer the project's tests)";
+				isLegacyVerifyGate = Boolean(
+					verifyCommand &&
+						perRoundCommandGates.length === 1 &&
+						perRoundCommandGates[0].name === "verify" &&
+						perRoundCommandGates[0].command === verifyCommand,
+				);
+			};
+			refreshGates();
 
 			// Push this session's foreman tasks to the footer statusline (newest-first, with the live
 			// crew agent). No-op when there's no interactive UI (headless/print/RPC).
@@ -527,29 +800,70 @@ export default function (pi: ExtensionAPI) {
 					return done();
 				}
 				if (params.approve) {
+					const persistedDraft = readPersistedPlannerDraft(cwd, slug);
+					let manifestResult: { wrote: boolean; reason: string } | null = null;
+					if (persistedDraft) {
+						manifestResult = writeProposedManifestOnGate1Approval(cwd, persistedDraft);
+					}
 					state.gate1Approved = true;
 					state.state = "in_progress";
 					writeState(cwd, state);
-					appendLog(cwd, slug, { type: "gate1_approved" });
-					emit("Plan approved. Starting dev->test->fix rounds.");
+					appendLog(cwd, slug, {
+						type: "gate1_approved",
+						manifest: manifestResult ? { wrote: manifestResult.wrote, reason: manifestResult.reason } : undefined,
+					});
+					refreshGates();
+					emit(
+						manifestResult?.wrote
+							? "Plan approved. Wrote proposed .pi/foreman.json. Starting dev->test->fix rounds."
+							: `Plan approved. Starting dev->test->fix rounds.${manifestResult ? ` (${manifestResult.reason})` : ""}`,
+					);
 				} else {
-					const plan = [
-						`# Plan: ${state.task}`,
-						"",
-						`- Working directory: ${cwd}`,
-						`- Track: ${track}${track === "frontend" ? " (ui-developer; auto-fallback to Opus xhigh on tool failure)" : ""}`,
-						`- Per-round command gates: ${perRoundGateSummary}`,
-						`- ${track === "frontend" ? "UI developer" : "Developer"}: ${developer.model ?? "default"} implements; controller runs per-round command gates (exit code = ground truth).`,
-						`- Tester: ${tester.model ?? "default"} judges intent and catches cheats.`,
-						`- Up to ${state.maxRounds} fix rounds, then escalate.`,
-						"",
-					].join("\n");
+					const persisted = readPersistedPlannerDraft(cwd, slug);
+					const manifestExists = hasForemanManifest(cwd);
+					const drafted = persisted
+						? persisted
+						: await draftPlannerPlan({
+								cwd,
+								slug,
+								task: state.task,
+								track,
+								maxRounds: state.maxRounds,
+								verifyCommand,
+								developerModel: developer.model,
+								testerModel: tester.model,
+								existingGates: gates,
+								manifestExists,
+								ownerSessionId: sessionId,
+								signal,
+							});
+					writePersistedPlannerDraft(cwd, slug, drafted);
+					const plan = renderFounderPlan(drafted.plan, {
+						task: state.task,
+						cwd,
+						track,
+						maxRounds: state.maxRounds,
+						verifyCommand,
+						developerLabel: track === "frontend" ? "UI developer" : "Developer",
+						developerModel: developer.model,
+						testerModel: tester.model,
+						manifestExists,
+						existingGates: gates,
+						plannerSource: drafted.source,
+						manifestWriteEligible: drafted.source === "planner",
+					});
 					fs.writeFileSync(path.join(taskDir(cwd, slug), "plan.md"), `${plan}\n`);
 					state.state = "planning";
 					writeState(cwd, state);
-					appendLog(cwd, slug, { type: "gate1_awaiting" });
+					appendLog(cwd, slug, {
+						type: "gate1_awaiting",
+						planner: drafted.source,
+						note: drafted.note,
+						perRoundGates: perRoundGateSummary,
+					});
 					emit(
 						`\n=== GATE 1 / PLAN — approval needed ===\n${plan}\n` +
+							`Await founder approval; do not auto-approve this gate.\n` +
 							`Approve:  foreman({ resume: true, approve: true })\n` +
 							`Revise:   foreman({ resume: true, reject: "<what to change>" })`,
 					);

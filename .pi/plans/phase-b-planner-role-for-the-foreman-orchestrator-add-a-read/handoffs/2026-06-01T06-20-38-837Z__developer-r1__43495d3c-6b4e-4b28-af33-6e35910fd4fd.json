@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-06-01T06:20:38.837Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "43495d3c-6b4e-4b28-af33-6e35910fd4fd",
+  "summary": "(no structured summary)",
+  "raw": "Gate 2 / ship approval is ready.\n\nVerification passed:\n\n`bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh`\n\nImplemented:\n- read-only planner crew agent\n- Gate 1 planner wiring with fallback\n- PLAN-JSON parse/persist/render helpers\n- proposed `.pi/foreman.json` write only on Gate 1 approval when absent\n- `planner_test.sh` coverage\n- existing tests still passing\n\nReply **approve** to finalize, or send revision feedback."
+}

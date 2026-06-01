@@ -1,0 +1,16 @@
+{
+  "task": "Refine the Foreman route-through-foreman guard so it gates on impact mechanically by path. In extensions/foreman/guard.ts, add a pure exported isNoImpactPath(absPath, { repoRoot, scratchDirs }) with normalized path/dir-boundary comparisons: scratch paths are no-impact; repoRoot null means no-impact; inside repo only prose by extension/known-name is no-impact (.md/.markdown/.mdx/.txt/.rst/.adoc and LICENSE/LICENCE/COPYING/NOTICE/AUTHORS with or without extension). Add an exported resolver or context support so pure logic is testable without fs/git and default resolver walks up for .git. Update classifyToolCall({ toolName, input }, context?) so edit/write resolve target paths against cwd and gate only impactful in-repo paths; bash keeps existing mutation detection but if all extractable write targets are no-impact then gate:false, otherwise conservative gate:true; read-only tools unchanged; gated reason text still mentions foreman(. Wire extensions/foreman/index.ts tool_call handler to pass real context { cwd: ctx.cwd, findRepoRoot: walk up from path for .git, scratchDirs: [os.tmpdir(), process.env.TMPDIR, '/tmp', '/private/tmp', '/var/folders', '/private/var/folders'].filter(Boolean) }, keeping FOREMAN_CREW==='1' and directMode early returns unchanged. Extend extensions/foreman/test/guard_test.sh hermetically to inject repoRoot/scratchDirs and assert scratch/out-of-repo/prose no-impact, code/config gated, repo boundary, classify edit/write behavior, bash redirects/sed behavior, and preserve existing assertions. Do not touch ledger/gates/fallback except ensure they pass.",
+  "slug": "refine-the-foreman-route-through-foreman-guard-so-it-gates-o",
+  "state": "planning",
+  "workingDirectory": "/Users/a1241968/Desktop/Oscar/my-pi-harness",
+  "track": "backend",
+  "ownerSessionId": "019e81db-314d-778e-9a18-ff21054e8a2a",
+  "verifyCommand": "bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh",
+  "round": 0,
+  "maxRounds": 3,
+  "lastReviewedHandoffCount": 0,
+  "gate1Approved": false,
+  "gate2Approved": false,
+  "createdAt": "2026-06-01T06:24:59.205Z",
+  "updatedAt": "2026-06-01T06:25:29.222Z"
+}

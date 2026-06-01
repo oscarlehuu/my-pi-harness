@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-01T06:22:48.568Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "07ee64df-6473-40be-acfe-6c116e6ddae8",
+  "successState": "success",
+  "summary": "Now let me look at how planner is wired into index.ts.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "Now let me look at how planner is wired into index.ts.\nNow let me verify constraints — no changes to gates.ts/dashboard/schema, and check ledger.ts change.\nNo changes to gates.ts or dashboard. Let me check the guard.ts/guard_test.sh (untracked, part of separate work?) and verify the planner_test isn't cheated, plus run the verify command.\nAll task requirements are satisfied:\n\n- **Read-only planner crew agent**: `crew/planner.md` with `tools: read, grep, find, ls` and explicit read-only instructions.\n- **Wired into Gate 1 with fallback**: `draftPlannerPlan()` runs the planner agent and falls back to `fallbackPlannerPlan()` on missing agent / nonzero exit / timeout / invalid JSON.\n- **Parse/persist PLAN-JSON**: `parsePlannerPlanJson()` with markers, persisted to `plan.json` via `writePersistedPlannerPlan`, mirrored in ledger.ts.\n- **Founder-facing render**: `renderFounderPlan()` emits Summary/Steps/Risks/Proposed gates/manifest decision.\n- **Manifest write only on Gate 1 approval when absent**: `writeProposedManifestOnGate1Approval()` → `decideManifestWrite` preserves existing manifest.\n- **Pure helpers + planner_test.sh**: `planner.ts` is pure (node-builtins only); `planner_test.sh` covers parse/validate, fallback, manifest decisions, and render — genuine assertions, not cheats.\n- **Constraints honored**: no changes to gates.ts/dashboard/schema; only a doc-comment + filename addition in ledger.ts; `gate_flow_test.sh` still passes with fallback when model unavailable.\n\nAll five verify-command tests pass, plus `gate_flow_test.sh`.\n\nVERDICT: PASS"
+}

@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-06-01T06:52:25.040Z",
+  "role": "developer",
+  "round": 3,
+  "sessionId": "27511997-1fb9-4529-8d57-e9ab31aecfd8",
+  "summary": "Added the Foreman planner agent and Gate 1 planner pipeline with safe fallback, PLAN-JSON persistence, proposed-gate manifest decisions, and expanded tests.",
+  "filesChanged": [
+    "extensions/foreman/crew/planner.md - new read-only planner crew agent",
+    "extensions/foreman/planner.ts - planner validation/render/manifest helper module",
+    "extensions/foreman/index.ts - Gate 1 planner wiring and approval-time manifest write logic",
+    "extensions/foreman/ledger.ts - mirror planner metadata file",
+    "extensions/foreman/test/planner_test.sh - planner helper coverage"
+  ],
+  "howToVerify": "bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+  "raw": "## Completed\nImplemented Foreman Gate 1 planner support with read-only planner agent, PLAN-JSON parsing/persistence, fallback rendering, manifest write gating, planner activity updates, and expanded planner tests.\n\n## Files Changed\n- `extensions/foreman/crew/planner.md` - new read-only planner agent contract.\n- `extensions/foreman/planner.ts` - pure planner validation/render/manifest helpers.\n- `extensions/foreman/index.ts` - wired planner into Gate 1, persisted plan/source, writes `.pi/foreman.json` only after eligible approval.\n- `extensions/foreman/ledger.ts` - mirrors `plan.meta.json`.\n- `extensions/foreman/test/planner_test.sh` - added planner validation/render/manifest decision coverage.\n\n## How To Verify\n`bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh`\n\n## Notes\nAlso ran `bash extensions/foreman/test/gate_flow_test.sh` successfully. No `gates.ts`, dashboard schema, or `ActivityPhase` changes.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n\n---DEV-JSON---\n{\n  \"summary\": \"Added the Foreman planner agent and Gate 1 planner pipeline with safe fallback, PLAN-JSON persistence, proposed-gate manifest decisions, and expanded tests.\",\n  \"filesChanged\": [\n    \"extensions/foreman/crew/planner.md - new read-only planner crew agent\",\n    \"extensions/foreman/planner.ts - planner validation/render/manifest helper module\",\n    \"extensions/foreman/index.ts - Gate 1 planner wiring and approval-time manifest write logic\",\n    \"extensions/foreman/ledger.ts - mirror planner metadata file\",\n    \"extensions/foreman/test/planner_test.sh - planner helper coverage\"\n  ],\n  \"howToVerify\": \"bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh\"\n}\n---END-DEV-JSON---"
+}

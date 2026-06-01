@@ -1,0 +1,43 @@
+# Plan: Phase B — Planner role for the Foreman orchestrator (repo: my-pi-harness, extension: extensions/foreman).
+
+GOAL: Make Gate 1 a REAL plan instead of the current template stub. Add a `planner` crew agent that runs ONCE at the start of a task (before the dev->test->fix rounds), does recon on the target repo, and produces: (1) a concrete implementation plan, and (2) a PROPOSED gate manifest (.pi/foreman.json) auto-detected from the repo. The founder still approves at Gate 1 — the planner informs that decision, it does not replace the gate.
+
+CONTEXT YOU MUST READ FIRST:
+- extensions/foreman/index.ts — the orchestrator. Gate 1 currently writes a static `plan.md` from a template (search for "GATE 1 / PLAN" and the `const plan = [` block). The dev/tester are spawned via `runAgent(loadAgent(name), ...)`. Phase A just added `gates.ts` (loadGates/gatesForStage/Gate type) and a TODO hook before Gate 2.
+- extensions/foreman/gates.ts — the Gate type + loadGates. The planner proposes a manifest in THIS shape.
+- extensions/foreman/crew/scout.md and crew/developer.md — the existing crew-file format (frontmatter: name/description/model/optional tools; body = system prompt). Match this format exactly.
+- extensions/foreman/crew/tester.md — note how a crew agent emits a machine-parseable block (the tester's VERDICT). The planner needs an analogous machine block the controller can parse.
+
+DELIVERABLES:
+1. NEW crew file extensions/foreman/crew/planner.md
+   - frontmatter: name: planner; model: cliproxy/claude-opus-4-8:xhigh; tools: read, grep, find, ls, bash (READ-ONLY recon — same tool posture as scout/tester; the planner MUST NOT edit/write/create code or run mutating commands).
+   - system prompt: a senior tech-lead persona that (a) recons the repo (structure, language, test setup, existing scripts in package.json / Makefile / etc., framework, and whether it's web/mobile/CLI), (b) decomposes the task into concrete steps, (c) lists the files likely to touch, (d) flags risks, (e) proposes a per-round / pre-ship / release gate manifest by AUTO-DETECTING the project's real commands (e.g. typecheck/lint/unit as per-round; e2e/integration as pre-ship — only include gates whose commands actually exist in the repo; if nothing is detectable, propose an empty gates list and say so).
+   - MANDATORY machine block at the end, fenced exactly like the tester's contract, e.g. between ---PLAN-JSON--- and ---END-PLAN-JSON--- containing: { "summary": string, "steps": string[], "filesLikely": string[], "risks": string[], "proposedGates": Gate[] } where Gate matches gates.ts ({name,kind,stage,command?/agent?/action?}).
+
+2. WIRE the planner into index.ts at Gate 1 (minimal blast radius):
+   - When a task first reaches the planning state (i.e. before gate1Approved, when generating the plan to show the founder), spawn the planner via the SAME runAgent machinery used for developer/tester (load it with loadAgent("planner"); reuse transcriptFilePath/writeActivity so it shows in the dashboard like other crew). Use a NEW activity phase value is NOT required — to avoid touching the ledger/dashboard ActivityPhase union, you may reuse an existing phase label (e.g. "developer") OR set the activity note to make clear it's planning; pick the lower-blast-radius option and document it. Do NOT change the ActivityPhase type or the dashboard in this phase.
+   - Parse the planner's ---PLAN-JSON--- block with the existing extractJsonBlock helper. Write the planner's human-readable output as plan.md (replacing the template), and ALSO persist the parsed plan JSON to the task dir (e.g. handoffs as a planner handoff, or a plan.json file — choose the approach that fits the existing ledger helpers; if you add a file, make sure it lands under the committed plans/ tree).
+   - The Gate 1 message shown to the founder MUST now include: the planner's summary, the steps, the risks, and the PROPOSED gates (names + stage + command). The founder approves/rejects as today (approve: true / reject).
+   - PROPOSED gates handling: do NOT auto-write .pi/foreman.json silently. If no .pi/foreman.json exists AND the planner proposed gates, WRITE the proposal to .pi/foreman.json as part of plan approval (gate1 approve path) so subsequent rounds pick it up via loadGates — but if .pi/foreman.json ALREADY exists, never overwrite it (respect the human's committed config); just note the divergence in the plan text. Make this logic clear and tested.
+   - If the planner spawn fails, errors, or emits no parseable PLAN-JSON, FALL BACK to today's template plan (never block Gate 1 on planner failure). Log the fallback.
+
+STRICT CONSTRAINTS:
+- Do NOT change the ActivityPhase union, ledger schema fields (beyond writing a plan.json/handoff via existing helpers), the dashboard, or gates.ts.
+- Quota safety: the planner is a cliproxy/Anthropic agent, so it MUST be spawned with the append-only system prompt path (same as developer/tester via runAgent — do not introduce a replace-style system prompt).
+- Keep the existing gate_flow_test.sh passing (it starts a task and approves Gate 1 — the planner now runs in that path, so ensure a planner failure/timeout can't break it; the test env may not have a real planner model, so the fallback-to-template path MUST keep the gate working).
+- The planner is READ-ONLY. It must never write code. Enforce via the tools frontmatter (no write/edit).
+
+TEST (create + make this the verify target): extensions/foreman/test/planner_test.sh — headless node test, same style as gates_test.sh / fallback_test.sh. Since spawning a real model is out of scope for a unit test, factor the parse+manifest-decision logic into a PURE, exported helper (e.g. in a new extensions/foreman/planner.ts module, node-builtins only) and test THAT:
+- a helper that, given a parsed PLAN-JSON object + whether .pi/foreman.json already exists, decides: should we write foreman.json? what gates? (writes only when absent + proposal non-empty; never when present).
+- a helper that renders the Gate 1 founder-facing plan text from the parsed PLAN-JSON (assert it includes summary, steps, risks, and proposed gate names+stages).
+- validation: a malformed/empty PLAN-JSON => decision = "use template fallback, do not write foreman.json".
+Cover the existing suites too in the verify command so nothing regressed.
+
+End with the mandatory DEV-JSON machine block.
+
+- Working directory: /Users/a1241968/Desktop/Oscar/my-pi-harness
+- Verify command: bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh
+- Developer: openai-codex/gpt-5.5:xhigh implements; controller runs verify (exit code = ground truth).
+- Tester: cliproxy/claude-opus-4-8:high judges intent and catches cheats.
+- Up to 3 fix rounds, then escalate.
+

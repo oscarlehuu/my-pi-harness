@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-06-01T07:08:41.806Z",
+  "role": "developer",
+  "round": 3,
+  "sessionId": "e7b50b7f-cf7c-454d-8602-d48431e4bb3b",
+  "summary": "Foreman now parses planner PLAN-JSON through extractJsonBlock, treats missing planner source metadata as fallback/ineligible, and mirrors planner metadata durably.",
+  "filesChanged": [
+    "extensions/foreman/index.ts - use extractJsonBlock + validatePlannerPlan for planner output; default missing persisted source to fallback",
+    "extensions/foreman/planner.ts - missing source defaults to manifest-write ineligible",
+    "extensions/foreman/ledger.ts - mirror plan.meta.json with other durable ledger files",
+    "extensions/foreman/test/planner_test.sh - added parser/static and missing-source manifest assertions",
+    "extensions/foreman/test/ledger_test.sh - added plan.meta.json mirror/restore assertions"
+  ],
+  "howToVerify": "for t in extensions/foreman/test/*_test.sh; do echo \"== $t ==\"; bash \"$t\"; done",
+  "raw": "## Completed\nApplied both safety/spec fixes:\n- Foreman now parses planner output via `extractJsonBlock(run.text, PLAN_JSON_START, PLAN_JSON_END)` then `validatePlannerPlan`.\n- Missing persisted planner source now defaults to fallback/not eligible.\n- Ledger mirror now covers `plan.meta.json`, with test coverage.\n\n## Files Changed\n- `extensions/foreman/index.ts` - planner PLAN-JSON parsing and missing-source fallback default.\n- `extensions/foreman/planner.ts` - missing source defaults to manifest-write ineligible.\n- `extensions/foreman/ledger.ts` - mirrors `plan.meta.json`.\n- `extensions/foreman/test/planner_test.sh` - assertions for extractJsonBlock usage and missing-source decision.\n- `extensions/foreman/test/ledger_test.sh` - mirror/restore coverage for `plan.meta.json`.\n\n## How To Verify\n`for t in extensions/foreman/test/*_test.sh; do echo \"== $t ==\"; bash \"$t\"; done`\n\n## Notes\nAll Foreman tests passed with the command above.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n---DEV-JSON---\n{\n  \"summary\": \"Foreman now parses planner PLAN-JSON through extractJsonBlock, treats missing planner source metadata as fallback/ineligible, and mirrors planner metadata durably.\",\n  \"filesChanged\": [\n    \"extensions/foreman/index.ts - use extractJsonBlock + validatePlannerPlan for planner output; default missing persisted source to fallback\",\n    \"extensions/foreman/planner.ts - missing source defaults to manifest-write ineligible\",\n    \"extensions/foreman/ledger.ts - mirror plan.meta.json with other durable ledger files\",\n    \"extensions/foreman/test/planner_test.sh - added parser/static and missing-source manifest assertions\",\n    \"extensions/foreman/test/ledger_test.sh - added plan.meta.json mirror/restore assertions\"\n  ],\n  \"howToVerify\": \"for t in extensions/foreman/test/*_test.sh; do echo \\\"== $t ==\\\"; bash \\\"$t\\\"; done\"\n}\n---END-DEV-JSON---"
+}

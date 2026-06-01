@@ -121,7 +121,7 @@ function mirrorPlansRoot(workingDir: string): string | null {
 	return root ? path.join(root, repoKey(workingDir), "plans") : null;
 }
 
-/** Best-effort copy of a task's committable files (state.json, plan.md, log.jsonl, handoffs/) to the mirror. */
+/** Best-effort copy of a task's committable files (state.json, plan.md, plan.json, plan.meta.json, log.jsonl, handoffs/) to the mirror. */
 function syncToMirror(workingDir: string, slug: string): void {
 	const root = mirrorPlansRoot(workingDir);
 	if (!root) return;
@@ -129,7 +129,7 @@ function syncToMirror(workingDir: string, slug: string): void {
 		const src = taskDir(workingDir, slug);
 		const dest = path.join(root, slug);
 		fs.mkdirSync(dest, { recursive: true });
-		for (const f of ["state.json", "plan.md", "log.jsonl"]) {
+		for (const f of ["state.json", "plan.md", "plan.json", "plan.meta.json", "log.jsonl"]) {
 			const s = path.join(src, f);
 			if (fs.existsSync(s)) fs.copyFileSync(s, path.join(dest, f));
 		}

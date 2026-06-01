@@ -330,6 +330,7 @@ async function runSingleAgent(
 				cwd: cwd ?? defaultCwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
+				env: { ...process.env, FOREMAN_CREW: "1" },
 			});
 			let buffer = "";
 

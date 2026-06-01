@@ -1,0 +1,16 @@
+{
+  "task": "Phase B — Planner role for the Foreman orchestrator. Add a read-only planner crew agent; wire it into Gate 1 with fallback to template; parse/persist PLAN-JSON; render founder-facing plan with summary/steps/risks/proposed gates; write proposed .pi/foreman.json only on Gate 1 approval when absent; factor pure helper(s) into planner module and add planner_test.sh covering manifest decision/render/validation plus keep existing tests passing. Follow constraints: no ActivityPhase/dashboard/schema/gates.ts changes; planner read-only; fallback must keep gate_flow_test/gate working when model unavailable.",
+  "slug": "phase-b-planner-role-for-the-foreman-orchestrator-add-a-read",
+  "state": "awaiting_ship",
+  "workingDirectory": "/Users/a1241968/Desktop/Oscar/my-pi-harness",
+  "track": "backend",
+  "ownerSessionId": "019e81c6-3982-783a-92cd-208893ebc5ad",
+  "verifyCommand": "bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+  "round": 3,
+  "maxRounds": 3,
+  "lastReviewedHandoffCount": 12,
+  "gate1Approved": true,
+  "gate2Approved": false,
+  "createdAt": "2026-06-01T06:02:06.988Z",
+  "updatedAt": "2026-06-01T07:22:47.930Z"
+}

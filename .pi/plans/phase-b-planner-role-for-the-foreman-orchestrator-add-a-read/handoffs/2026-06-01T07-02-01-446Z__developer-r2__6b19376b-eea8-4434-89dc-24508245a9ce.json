@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-06-01T07:02:01.446Z",
+  "role": "developer",
+  "round": 2,
+  "sessionId": "6b19376b-eea8-4434-89dc-24508245a9ce",
+  "summary": "Fixed the remaining planner spec gaps around real-command-only proposed gates and added prompt/frontmatter coverage. Verification including gate_flow_test passed.",
+  "filesChanged": [
+    "extensions/foreman/crew/planner.md - tightened planner prompt contract",
+    "extensions/foreman/index.ts - stopped instructing planner to auto-propose legacy verifyCommand",
+    "extensions/foreman/test/planner_test.sh - added planner prompt/frontmatter assertions"
+  ],
+  "howToVerify": "bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh && bash extensions/foreman/test/gate_flow_test.sh",
+  "raw": "## Completed\nApplied the requested planner fixes. Tightened the planner prompt so proposed gates are only real repo commands, removed the verify-command override, and added planner prompt/frontmatter assertions.\n\n## Files Changed\n- `extensions/foreman/crew/planner.md` - planner contract now requires only real repo commands for proposed gates.\n- `extensions/foreman/index.ts` - planner task prompt now treats `verifyCommand` as legacy fallback only, not an automatic proposal.\n- `extensions/foreman/test/planner_test.sh` - added assertions for required planner model/tools and no legacy `proposedManifest`/CTO override contract.\n\n## How To Verify\n```bash\nbash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh && bash extensions/foreman/test/gate_flow_test.sh\n```\n\n## Notes\nVerification passed. Foreman task is still waiting at ship approval; I did not auto-approve Gate 2.\n\n---DEV-JSON---\n{\n  \"summary\": \"Fixed the remaining planner spec gaps around real-command-only proposed gates and added prompt/frontmatter coverage. Verification including gate_flow_test passed.\",\n  \"filesChanged\": [\n    \"extensions/foreman/crew/planner.md - tightened planner prompt contract\",\n    \"extensions/foreman/index.ts - stopped instructing planner to auto-propose legacy verifyCommand\",\n    \"extensions/foreman/test/planner_test.sh - added planner prompt/frontmatter assertions\"\n  ],\n  \"howToVerify\": \"bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh && bash extensions/foreman/test/gate_flow_test.sh\"\n}\n---END-DEV-JSON---"
+}

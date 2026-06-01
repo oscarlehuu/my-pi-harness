@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-06-01T06:16:43.672Z",
+  "role": "developer",
+  "round": 3,
+  "sessionId": "17977c9b-7798-413d-9887-b24599b256eb",
+  "summary": "Added the Foreman Gate 1 planner role with PLAN-JSON parsing/persistence, fallback rendering, and approval-time .pi/foreman.json creation when absent. Added planner helper tests and kept the requested existing tests passing.",
+  "filesChanged": [
+    "extensions/foreman/planner.ts - pure planner helpers",
+    "extensions/foreman/crew/planner.md - read-only planner agent",
+    "extensions/foreman/index.ts - Gate 1 planner wiring and manifest approval behavior",
+    "extensions/foreman/ledger.ts - mirror plan.json",
+    "extensions/foreman/test/planner_test.sh - planner helper tests"
+  ],
+  "howToVerify": "bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+  "raw": "## Completed\nImplemented Phase B planner support for Foreman Gate 1: read-only planner agent, PLAN-JSON parsing/persistence, fallback template planning, founder-facing render, and approval-time `.pi/foreman.json` write when absent.\n\n## Files Changed\n- `extensions/foreman/planner.ts` - pure planner validation/render/manifest-decision helpers.\n- `extensions/foreman/crew/planner.md` - read-only planner crew agent.\n- `extensions/foreman/index.ts` - Gate 1 planner wiring, fallback, PLAN-JSON persistence, approval-time manifest write.\n- `extensions/foreman/ledger.ts` - mirrors persisted `plan.json`.\n- `extensions/foreman/test/planner_test.sh` - helper coverage for validation/render/manifest decisions.\n\n## How To Verify\n`bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh`\n\n## Notes\nVerified command passes. No `gates.ts`, dashboard, or ActivityPhase changes.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n---DEV-JSON---\n{\n  \"summary\": \"Added the Foreman Gate 1 planner role with PLAN-JSON parsing/persistence, fallback rendering, and approval-time .pi/foreman.json creation when absent. Added planner helper tests and kept the requested existing tests passing.\",\n  \"filesChanged\": [\n    \"extensions/foreman/planner.ts - pure planner helpers\",\n    \"extensions/foreman/crew/planner.md - read-only planner agent\",\n    \"extensions/foreman/index.ts - Gate 1 planner wiring and manifest approval behavior\",\n    \"extensions/foreman/ledger.ts - mirror plan.json\",\n    \"extensions/foreman/test/planner_test.sh - planner helper tests\"\n  ],\n  \"howToVerify\": \"bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh\"\n}\n---END-DEV-JSON---"
+}

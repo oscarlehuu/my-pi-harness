@@ -42,6 +42,20 @@ export interface PlannerContext {
 	manifestWriteEligible?: boolean;
 }
 
+export type PlannerTimeoutReason = "idle" | "max";
+
+export interface PlannerTimeoutDecision {
+	abort: boolean;
+	reason: PlannerTimeoutReason | null;
+}
+
+export interface PlannerTimeouts {
+	idleMs: number;
+	maxMs: number;
+}
+
+export type PlannerTimeoutEnv = Record<string, string | undefined>;
+
 export interface ManifestDecision {
 	shouldWrite: boolean;
 	reason: string;
@@ -50,6 +64,39 @@ export interface ManifestDecision {
 
 const VALID_KINDS = new Set<GateKind>(["command", "judge", "action"]);
 const VALID_STAGES = new Set<GateStage>(["per-round", "pre-ship", "release"]);
+const DEFAULT_PLANNER_IDLE_MS = 45_000;
+const DEFAULT_PLANNER_MAX_MS = 300_000;
+const MIN_PLANNER_IDLE_MS = 1_000;
+
+function parsePlannerTimeoutMs(value: string | undefined, fallback: number): number {
+	if (value == null || value.trim() === "") return fallback;
+	const parsed = Number(value);
+	return Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
+}
+
+export function resolvePlannerTimeouts(env: PlannerTimeoutEnv): PlannerTimeouts {
+	const idleSource = env.FOREMAN_PLANNER_IDLE_MS ?? env.FOREMAN_PLANNER_TIMEOUT_MS;
+	const idleMs = Math.max(MIN_PLANNER_IDLE_MS, parsePlannerTimeoutMs(idleSource, DEFAULT_PLANNER_IDLE_MS));
+	const requestedMaxMs = parsePlannerTimeoutMs(env.FOREMAN_PLANNER_MAX_MS, DEFAULT_PLANNER_MAX_MS);
+	const maxMs = Math.max(idleMs, requestedMaxMs);
+	return { idleMs, maxMs };
+}
+
+/**
+ * Decide whether the planner should be aborted. If both limits are exceeded, the absolute max
+ * backstop wins over the idle limit so a pathological long run is reported as "max".
+ */
+export function decidePlannerTimeout(input: {
+	now: number;
+	startedAt: number;
+	lastActivityAt: number;
+	idleMs: number;
+	maxMs: number;
+}): PlannerTimeoutDecision {
+	if (input.now - input.startedAt >= input.maxMs) return { abort: true, reason: "max" };
+	if (input.now - input.lastActivityAt >= input.idleMs) return { abort: true, reason: "idle" };
+	return { abort: false, reason: null };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);

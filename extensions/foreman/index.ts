@@ -52,8 +52,10 @@ import {
 	PLAN_JSON_END,
 	PLAN_JSON_START,
 	decideManifestWrite,
+	decidePlannerTimeout,
 	fallbackPlannerPlan,
 	renderFounderPlan,
+	resolvePlannerTimeouts,
 	serializePlannerPlan,
 	validatePlannerPlan,
 } from "./planner.ts";
@@ -61,7 +63,7 @@ import { decideReviewOutcome, parseReviewVerdict, type ReviewVerdict } from "./r
 
 // Stronger model the frontend track falls back to when Gemini fails to drive the tools.
 const UI_FALLBACK_MODEL = "cliproxy/claude-opus-4-8:xhigh";
-const PLANNER_TIMEOUT_MS = Math.max(1000, Number(process.env.FOREMAN_PLANNER_TIMEOUT_MS ?? 30000) || 30000);
+const PLANNER_TIMEOUTS = resolvePlannerTimeouts(process.env);
 
 // Durable out-of-tree ledger mirror: survives `git clean`/reset/crash inside any target repo.
 // Resolve the location from pi's agent dir and publish it via env so the ledger module finds it even
@@ -114,6 +116,7 @@ interface RunAgentOptions {
 	round: number;
 	transcriptPath: string;
 	signal?: AbortSignal;
+	onActivity?: () => void;
 }
 
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
@@ -211,7 +214,11 @@ async function runAgent(agent: AgentDef, task: string, cwd: string, options: Run
 	if (agent.model) args.push("--model", agent.model);
 	if (agent.tools?.length) args.push("--tools", agent.tools.join(","));
 
-	const appendTranscript = makeTranscriptWriter(options.transcriptPath);
+	const writeTranscript = makeTranscriptWriter(options.transcriptPath);
+	const appendTranscript = (event: Record<string, unknown>) => {
+		writeTranscript(event);
+		options.onActivity?.();
+	};
 	appendTranscript({
 		kind: "agent_start",
 		role: options.role,
@@ -596,13 +603,38 @@ async function draftPlannerPlan(input: {
 		pid: process.pid,
 		ownerSessionId: input.ownerSessionId,
 	});
+	const { idleMs, maxMs } = PLANNER_TIMEOUTS;
 	const controller = new AbortController();
-	let timedOut = false;
+	const startedAt = Date.now();
+	let lastActivityAt = startedAt;
+	let timeoutReason: "idle" | "max" | null = null;
 	let finalActivityNote = "planner finished";
-	const timer = setTimeout(() => {
-		timedOut = true;
+	let idleTimer: ReturnType<typeof setTimeout> | undefined;
+	let maxTimer: ReturnType<typeof setTimeout> | undefined;
+	const timeoutNote = (reason: "idle" | "max") =>
+		reason === "idle" ? `planner idle-timed-out after ${idleMs}ms (no activity)` : `planner hit max runtime ${maxMs}ms`;
+	function abortForTimeout() {
+		if (timeoutReason || controller.signal.aborted) return;
+		const decision = decidePlannerTimeout({ now: Date.now(), startedAt, lastActivityAt, idleMs, maxMs });
+		if (!decision.abort || !decision.reason) {
+			scheduleIdleTimer();
+			return;
+		}
+		timeoutReason = decision.reason;
 		controller.abort();
-	}, PLANNER_TIMEOUT_MS);
+	}
+	function scheduleIdleTimer() {
+		if (idleTimer) clearTimeout(idleTimer);
+		if (timeoutReason || controller.signal.aborted) return;
+		idleTimer = setTimeout(abortForTimeout, Math.max(0, lastActivityAt + idleMs - Date.now()));
+	}
+	function recordPlannerActivity() {
+		if (timeoutReason) return;
+		lastActivityAt = Date.now();
+		scheduleIdleTimer();
+	}
+	scheduleIdleTimer();
+	maxTimer = setTimeout(abortForTimeout, maxMs);
 	const abortPlanner = () => controller.abort();
 	input.signal?.addEventListener("abort", abortPlanner, { once: true });
 	try {
@@ -611,9 +643,10 @@ async function draftPlannerPlan(input: {
 			round: 0,
 			transcriptPath,
 			signal: controller.signal,
+			onActivity: recordPlannerActivity,
 		});
-		if (timedOut) {
-			const note = `planner timed out after ${PLANNER_TIMEOUT_MS}ms`;
+		if (timeoutReason) {
+			const note = timeoutNote(timeoutReason);
 			finalActivityNote = `planner fallback: ${note}`;
 			return { plan: fallback(), source: "fallback", note };
 		}
@@ -632,11 +665,12 @@ async function draftPlannerPlan(input: {
 		finalActivityNote = "planner complete";
 		return { plan: parsed, source: "planner" };
 	} catch (error) {
-		const note = `planner failed: ${String(error)}`;
+		const note = timeoutReason ? timeoutNote(timeoutReason) : `planner failed: ${String(error)}`;
 		finalActivityNote = `planner fallback: ${note}`;
 		return { plan: fallback(), source: "fallback", note };
 	} finally {
-		clearTimeout(timer);
+		if (idleTimer) clearTimeout(idleTimer);
+		if (maxTimer) clearTimeout(maxTimer);
 		input.signal?.removeEventListener("abort", abortPlanner);
 		writeActivity(input.cwd, input.slug, {
 			round: 0,

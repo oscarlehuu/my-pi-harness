@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-01T09:40:55.964Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "fd7d1ebb-3db5-462a-a78b-9128f4fef0df",
+  "successState": "success",
+  "summary": "The helpers look correct. Now let me check index.ts for the wiring.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh && grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman reviewer helper tests passed\nForeman gate pipeline tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "The helpers look correct. Now let me check index.ts for the wiring.\nThe implementation is complete and correct. Let me verify the crew file wasn't touched and check git diff scope.\nOnly index.ts, planner.ts, and the new test were changed. No crew files touched. Let me confirm dev/tester/reviewer runAgent calls omit onActivity.\nEverything checks out. The implementation fully satisfies the task:\n\n- **planner.ts**: `decidePlannerTimeout` (max precedence, checks max first) and `resolvePlannerTimeouts` (defaults 45000/300000, IDLE/MAX overrides, legacy TIMEOUT_MS→idle fallback, clamps idle>=1000 and max>=idle) — pure, node-builtins only.\n- **index.ts**: replaced fixed `PLANNER_TIMEOUT_MS` with `PLANNER_TIMEOUTS = resolvePlannerTimeouts(process.env)`; added optional `onActivity` to `RunAgentOptions`, fired at the `appendTranscript` site; dual idle+max timers with idle reset on activity; correct fallback notes; fallback-to-template preserved.\n- Only the planner runAgent call passes `onActivity` (dev/tester/reviewer unchanged).\n- No crew/model/reasoning changes — planner.md still `claude-opus-4-8:xhigh`; only index.ts, planner.ts, and the new test changed.\n- New `planner_timeout_test.sh` imports the real pure helpers (no hardcoding/cheats) and all suites pass.\n\nVERDICT: PASS\n\nDEV-JSON\n```json\n{\"verdict\":\"PASS\",\"reason\":\"Dynamic idle+max planner timeout implemented correctly: pure helpers decidePlannerTimeout (max precedence) and resolvePlannerTimeouts (defaults 45000/300000, env overrides, legacy fallback, clamps) in planner.ts; index.ts wires optional onActivity at the appendTranscript site, resets idle timer on activity, keeps separate max backstop, sets proper fallback notes, and preserves fallback-to-template. Only the planner path passes onActivity; dev/tester/reviewer unchanged. No crew/model/reasoning edits (planner.md still claude-opus-4-8:xhigh). New test imports real helpers (no cheats); all suites exit 0.\",\"files_changed\":[\"extensions/foreman/index.ts\",\"extensions/foreman/planner.ts\",\"extensions/foreman/test/planner_timeout_test.sh\"]}\n```"
+}

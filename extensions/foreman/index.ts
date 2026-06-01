@@ -826,6 +826,7 @@ async function runReleaseCommitGate(input: {
 	state: LedgerState;
 	track: Track;
 	gate: Gate;
+	doneSummary?: string;
 	signal?: AbortSignal;
 }): Promise<string> {
 	const ledgerRelDir = path.relative(input.cwd, taskDir(input.cwd, input.slug)) || path.join(".pi", "plans", input.slug);
@@ -873,6 +874,7 @@ async function runReleaseCommitGate(input: {
 			track: input.track,
 			filesChanged: handoffContext.filesChanged,
 			reviewerSummary: handoffContext.reviewerSummary,
+			doneSummary: input.doneSummary,
 		});
 		const { subject, body } = commitMessageParts(message);
 		const commit = await runGit(input.cwd, ["commit", "-m", subject, "-m", body], input.signal);
@@ -899,6 +901,7 @@ async function runReleaseActionGates(input: {
 	state: LedgerState;
 	track: Track;
 	gates: Gate[];
+	doneSummary?: string;
 	signal?: AbortSignal;
 }): Promise<string[]> {
 	const results: string[] = [];
@@ -1230,11 +1233,11 @@ export default function (pi: ExtensionAPI) {
 					state.state = "done";
 					writeState(cwd, state);
 					appendLog(cwd, slug, { type: "gate2_approved" });
-					appendLog(cwd, slug, { type: "done_evaluated", done: true, blockers: [] });
+					appendLog(cwd, slug, { type: "done_evaluated", done: true, blockers: doneness.blockers, checklist: doneness.checklist });
 					appendLog(cwd, slug, { type: "task_done", round: state.round });
 					const releaseActionGates = gatesForStage(gates, "release").filter((gate) => gate.kind === "action");
 					const releaseResults = releaseActionGates.length
-						? await runReleaseActionGates({ cwd, slug, state, track, gates: releaseActionGates, signal })
+						? await runReleaseActionGates({ cwd, slug, state, track, gates: releaseActionGates, doneSummary: doneChecklist, signal })
 						: [];
 					const releaseSummary = releaseResults.length ? `\nRelease actions:\n${releaseResults.join("\n")}` : "";
 					emit(`SHIPPED. Task done. Ledger: ${path.relative(cwd, taskDir(cwd, slug))}\n\n${doneChecklist}${releaseSummary}`);

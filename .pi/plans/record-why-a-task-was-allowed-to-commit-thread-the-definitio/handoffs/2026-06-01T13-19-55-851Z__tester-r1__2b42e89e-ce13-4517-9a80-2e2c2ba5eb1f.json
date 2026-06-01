@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-01T13:19:55.851Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "2b42e89e-ce13-4517-9a80-2e2c2ba5eb1f",
+  "successState": "success",
+  "summary": "I'll investigate the actual changes to verify the task was completed correctly.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll investigate the actual changes to verify the task was completed correctly.\nship.ts looks correct. Now let me check index.ts changes.\nAll three deliverables are present. Let me confirm the ship_test passes (it wasn't in the per-round verify command).\nLet me confirm blast radius via git.\nThe dashboard files were modified, which the strict constraints forbid. Let me check those diffs.\nThe dashboard changes are for a statusline feature (role badges) — unrelated to this task and clearly leftover working-tree changes from a different task. Let me confirm the index.ts diff is scoped to this task only.\nAll four deliverables for this task are correctly implemented and pass. The dashboard file changes (`reader.ts`, `view.ts`, `reader_test.sh`, and the statusline portions of `index.ts`) are from a separate \"redo statusline/dashboard\" task present in the shared working tree — they are not part of this task's deliverables.\n\nVerifying the actual task deliverables:\n\n1. **ship.ts** — `doneSummary?: string` added to `BuildCommitMessageInput` (ship.ts:17); appended as its own block after the Shipped-via-Foreman/Reviewer lines only when non-empty (ship.ts:96-97); byte-identical when absent. ✓\n2. **index.ts threading** — `doneSummary?` added to both `runReleaseCommitGate` (index.ts:829) and `runReleaseActionGates` (index.ts:904) inputs; passed into `buildCommitMessage` (index.ts:877); Gate 2 approve passes `doneChecklist` as `doneSummary` (index.ts:1257). Uses spawn-argv commit path, no shell interpolation. ✓\n3. **done_evaluated ledger** — now logs `{ done: true, blockers: doneness.blockers, checklist: doneness.checklist }` (index.ts:1253). ✓\n4. **ship_test.sh** — extended with a WITH-doneSummary case (asserts block appears verbatim, after Shipped/Reviewer lines) and a WITHOUT case (asserts byte-identical, no \"Definition of Done:\" text). ✓\n\ndone.ts logic untouched (reuses `renderDoneChecklist`/`DonenessResult`). ship_test passes and all suites in the verify gate pass (exit 0). No cheats — real logic, tests assert genuine behavior.\n\nVERDICT: PASS"
+}

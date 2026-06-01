@@ -14,6 +14,7 @@ export interface BuildCommitMessageInput {
 	track: string;
 	filesChanged?: string[];
 	reviewerSummary?: string;
+	doneSummary?: string;
 }
 
 export interface ResolveStagePathsInput {
@@ -89,6 +90,8 @@ export function buildCommitMessage(input: BuildCommitMessageInput): string {
 	bodyLines.push("", `Shipped via Foreman (slug: ${input.slug}, track: ${input.track || "backend"}).`);
 	const reviewerSummary = cleanOneLine(input.reviewerSummary ?? "");
 	if (reviewerSummary) bodyLines.push(`Reviewer summary: ${reviewerSummary}`);
+	const doneSummary = input.doneSummary ?? "";
+	if (doneSummary.trim()) bodyLines.push("", doneSummary);
 	return `${subject}\n\n${bodyLines.join("\n")}`;
 }
 

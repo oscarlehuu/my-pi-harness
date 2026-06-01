@@ -43,6 +43,16 @@ const messageAgain = ship.buildCommitMessage({
   reviewerSummary: "[reviewer] release: approve",
 });
 assert.equal(messageAgain, message, "fixed input produces deterministic commit message");
+const expectedMessage = `feat(foreman-task): Implement release action gates for Foreman with a...
+
+Files changed:
+- extensions/foreman/index.ts - wires Gate 2 release actions
+- extensions/foreman/ship.ts - adds pure ship helpers
+
+Shipped via Foreman (slug: phase-d-real-ship, track: backend).
+Reviewer summary: [reviewer] release: approve`;
+assert.equal(message, expectedMessage, "message without doneSummary stays byte-identical to the prior format");
+assert.doesNotMatch(message, /Definition of Done:/, "message without doneSummary omits Definition of Done text");
 const [subject, , ...bodyLines] = message.split("\n");
 const body = bodyLines.join("\n");
 assert.match(subject, /^feat\(foreman-task\): /, "subject is conventional with inferred feat type");
@@ -54,6 +64,34 @@ assert.equal((body.match(/extensions\/foreman\/index\.ts/g) ?? []).length, 1, "f
 assert.match(body, /slug: phase-d-real-ship/, "body notes Foreman slug");
 assert.match(body, /track: backend/, "body notes track");
 assert.match(body, /Reviewer summary: \[reviewer\] release: approve/, "body includes reviewer summary");
+
+const doneSummary = [
+  "Definition of Done:",
+  "✓ Plan approval: Gate 1 plan approved.",
+  "✓ Founder ship approval: Gate 2 founder sign-off is approved.",
+  "Blockers: none",
+].join("\n");
+const messageWithDoneSummary = ship.buildCommitMessage({
+  task: longTask,
+  slug: "phase-d-real-ship",
+  track: "backend",
+  filesChanged: [
+    "extensions/foreman/index.ts - wires Gate 2 release actions",
+    "extensions/foreman/ship.ts - adds pure ship helpers",
+  ],
+  reviewerSummary: "[reviewer] release: approve",
+  doneSummary,
+});
+assert.match(messageWithDoneSummary, /\n\nDefinition of Done:/, "doneSummary is appended as its own block");
+assert.ok(messageWithDoneSummary.includes(doneSummary), "doneSummary appears verbatim in the commit message");
+assert.ok(
+  messageWithDoneSummary.indexOf("Shipped via Foreman (slug: phase-d-real-ship, track: backend).") < messageWithDoneSummary.indexOf(doneSummary),
+  "doneSummary appears after the Shipped via Foreman line",
+);
+assert.ok(
+  messageWithDoneSummary.indexOf("Reviewer summary: [reviewer] release: approve") < messageWithDoneSummary.indexOf(doneSummary),
+  "doneSummary appears after the reviewer summary when present",
+);
 
 // ---- resolveStagePaths ----
 const ledgerRelDir = ".pi/plans/phase-d-real-ship";

@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-01T13:32:40.646Z",
+  "role": "tester",
+  "round": 2,
+  "sessionId": "64b86d7c-d300-4551-a98e-82d52c83ae85",
+  "successState": "success",
+  "summary": "I'll examine the actual changes to verify the task was completed correctly.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll examine the actual changes to verify the task was completed correctly.\nAll the core changes are present. Let me verify the test file.\nNow let me run the ship test to confirm it passes.\nLet me verify the blast radius — only ship.ts and index.ts changed.\nAll deliverables verified:\n\n1. **ship.ts** — `doneSummary?: string` added to `BuildCommitMessageInput`; appended as `\"\", doneSummary` block only when non-empty, after the Shipped-via-Foreman/Reviewer lines (ship.ts:16, ship.ts:96-97). Backward-compatible when absent.\n\n2. **index.ts** — `doneSummary?: string` threaded through `runReleaseActionGates` (index.ts:904) and `runReleaseCommitGate` (index.ts:829), passed to `buildCommitMessage` (index.ts:877). Gate 2 approve passes `doneChecklist` (index.ts:1240).\n\n3. **index.ts** — `done_evaluated` now carries `blockers: doneness.blockers, checklist: doneness.checklist` (index.ts:1236).\n\nConstraints respected: only ship.ts, index.ts, and ship_test.sh changed (the .pi/plans log/state edits are runtime ledger artifacts). done.ts/gates.ts/guard.ts/reviewer.ts/planner.ts/dashboard/crew/foreman.json untouched. Test extended with both WITH-doneSummary (verbatim, after Shipped line) and WITHOUT (byte-identical, no DoD text) assertions. Ship test passes; all per-round gates passed (exit 0).\n\nVERDICT: PASS"
+}

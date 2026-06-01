@@ -24,9 +24,11 @@ link() {
   ln -s "$target" "$name"
 }
 
-# --- Extensions: every domain folder under extensions/ that has an index.ts ---
+# --- Extensions: every domain folder under extensions/ that pi can load ---
+# pi loads a subdir if it has index.ts OR a package.json with a "pi.extensions"
+# manifest (used by multi-tool domains like grok/ -> websearch + xsearch).
 for ext in "$REPO_DIR"/extensions/*/; do
-  [ -f "${ext}index.ts" ] || continue
+  [ -f "${ext}index.ts" ] || [ -f "${ext}package.json" ] || continue
   name="$(basename "$ext")"
   link "$ext" "$AGENT_DIR/extensions/$name"
 done

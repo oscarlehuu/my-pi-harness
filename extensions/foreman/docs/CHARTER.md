@@ -62,7 +62,7 @@ Driven by the `foreman` tool (`extensions/foreman/`). The CTO starts it; the mac
 | Gate | When | Founder relay | Approve | Revise |
 |------|------|----------------|---------|--------|
 | **1 — Plan** | Before any code runs | `AskUserQuestion` header `Gate 1`; summarize the plan; options `Approve`/`Revise` | `foreman({ resume:true, approve:true })` → runs rounds | `foreman({ resume:true, reject:"…" })` → halts |
-| **2 — Ship** | After verification passes | `AskUserQuestion` header `Gate 2`; summarize DoD/ship result; options `Approve`/`Revise` | `foreman({ resume:true, approve:true })` → done | `foreman({ resume:true, reject:"…" })` → reopens for another round |
+| **2 — Ship** | After verification passes | `AskUserQuestion` header `Gate 2`; state the Definition of Done rationale (why commit is permitted or withheld) and summarize DoD/ship result; options `Approve`/`Revise` | `foreman({ resume:true, approve:true })` → done | `foreman({ resume:true, reject:"…" })` → reopens for another round |
 
 Gates are conversational and **persisted in the ledger**, so a killed/resumed session respects gate
 position. The CTO relays each gate to the founder with a single-select `AskUserQuestion` and carries
@@ -76,9 +76,19 @@ relay surface. If no UI is available (headless), fall back to the plain command 
 
 A task is **done** only when **all** hold:
 1. Gate 1 (plan) was approved.
-2. The verify command exits 0 (ground truth).
+2. Per-round command gates passed, if declared (or the check is n/a when none ran).
 3. The tester judged `success` — intent satisfied, no cheats.
-4. Gate 2 (ship) was approved by the founder.
+4. Pre-ship command gates passed, if declared (or n/a when none exist).
+5. Any declared pre-ship reviewer gate returned a clean `APPROVE`; `REQUEST-CHANGES`, missing, or
+   inconclusive reviewer output blocks done.
+6. Gate 2 (ship) was approved by the founder.
+
+At Gate 2, before founder approval, the CTO relays this Definition of Done rationale: every
+non-founder check that passed or is n/a, that founder sign-off is the only remaining item, and
+therefore why the task is eligible to commit. If any check blocks, the CTO says commit is WITHHELD
+and gives the blocker instead of implying approval is enough. Foreman also renders the checklist at
+Gate 2, records the full checklist in the `done_evaluated` ledger event, and embeds the
+"Definition of Done:" block in the auto-commit message body.
 
 Anything short of this is `escalated`, `awaiting_ship`, `in_progress`, or `planning` — never done.
 

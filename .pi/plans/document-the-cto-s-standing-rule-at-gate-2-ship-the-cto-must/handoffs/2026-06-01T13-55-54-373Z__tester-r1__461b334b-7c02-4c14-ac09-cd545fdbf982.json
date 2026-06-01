@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-01T13:55:54.373Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "461b334b-7c02-4c14-ac09-cd545fdbf982",
+  "successState": "success",
+  "summary": "I'll verify the actual changes against the task requirements.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll verify the actual changes against the task requirements.\nSource files clean (only the two doc files plus expected .pi/plans ledger/state churn). Let me inspect the actual doc diffs.\nBoth deliverables are correctly implemented:\n\n**AGENTS.md** — Gate 2 entry now states the CTO must relay the DoD rationale (which checks passed, founder sign-off remaining, or WITHHELD + why) before/with the AskUserQuestion relay; \"When to talk to the founder\" section also updated. Consistent voice, no unrelated rewrites.\n\n**CHARTER.md** — \"The two gates\" table Gate 2 row now states the DoD rationale; \"Definition of Done\" section adds the standing rule paragraph (CTO relays rationale, WITHHELD on blockers, notes Foreman renders checklist + records `done_evaluated` event + embeds \"Definition of Done:\" in auto-commit). The expanded checklist (per-round/pre-ship command gates, reviewer APPROVE) matches the real features and the exact rationale items the task enumerates — accurate, not spurious.\n\nChecks:\n- Both files contain \"Definition of Done\" at Gate 2 ✓\n- `git diff --name-only` shows only the two doc files among source; no .ts, no .pi/foreman.json, no crew/* changes (only expected .pi/plans ledger/state churn) ✓\n- Full existing suite passed (exit 0) ✓\n- DOC-ONLY, tool behavior/params untouched ✓\n\nThe change genuinely documents the CTO standing rule as specified — no cheats, no test/code edits.\n\nVERDICT: PASS"
+}

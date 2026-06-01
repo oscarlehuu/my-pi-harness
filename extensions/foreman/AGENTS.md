@@ -69,7 +69,11 @@ brainstorm → plan → [GATE 1] → implement → verify → test → (fix↺) 
    - **dev → verify → tester** rounds. The controller runs the verify command itself (its exit code
      is ground truth); the tester judges whether intent is satisfied and watches for cheats. On FAIL
      the verdict is fed back to the developer and retried, up to the round cap (~3), then escalates.
-   - **GATE 2 (ship)** — on success it pauses again. Relay it via an `AskUserQuestion` Approve/Revise prompt.
+   - **GATE 2 (ship)** — on success it pauses again and renders the Definition of Done checklist.
+     Before/with the `AskUserQuestion` relay, state the DoD rationale in plain language: which
+     checks passed (plan approval, per-round command gates, tester success, pre-ship command gates
+     if any, reviewer APPROVE if declared), that founder sign-off is the only remaining item, or
+     that the commit is WITHHELD and why if any check blocks.
 4. At both gates, present a single-select `AskUserQuestion` to the founder: header `Gate 1` for the
    plan gate or `Gate 2` for the ship gate; question summarizes the plan or DoD/ship result; options
    are `Approve` and `Revise`. Translate the answer into the unchanged Foreman calls: `Approve` →
@@ -87,7 +91,8 @@ The Foreman enforces the gates and retries; you carry the founder's decisions in
 Full operating manual: `extensions/foreman/docs/CHARTER.md`.
 
 ## When to talk to the founder (decision points only)
-- Plan approval (Gate 1) and ship (Gate 2), relayed with `AskUserQuestion` Approve/Revise prompts.
+- Plan approval (Gate 1) and ship (Gate 2), relayed with `AskUserQuestion` Approve/Revise prompts;
+  at Gate 2 always include the Definition of Done rationale for why commit is permitted or withheld.
 - Genuine forks where founder taste/priorities matter.
 - Blockers you cannot resolve after real investigation.
 NOT for routine progress, tool mechanics, or anything you can verify yourself.

@@ -1,0 +1,39 @@
+{
+  "summary": "Doc-only change documenting the CTO's standing rule: at Gate 2 (ship), the CTO must always state the Definition of Done rationale (which checks passed → why a commit is permitted, or why it is withheld) when relaying the ship gate via AskUserQuestion. Edit ONLY extensions/foreman/AGENTS.md and extensions/foreman/docs/CHARTER.md, consistent with the already-wired DoD checklist that Foreman renders at Gate 2, logs in done_evaluated, and embeds in the auto-commit message. No .ts/crew/.pi/foreman.json/dashboard/test changes.",
+  "steps": [
+    "AGENTS.md — in the Gate 2 bullet of 'The Foreman loop' (and/or the gate-4 AskUserQuestion relay paragraph) and the 'When to talk to the founder' section, add that at Gate 2 the CTO always states the Definition of Done rationale: which checks passed (plan approved, per-round command gates, tester success, pre-ship command gates if any, reviewer APPROVE if a reviewer gate is declared) and that only the founder's sign-off remains — i.e. WHY the commit is permitted; if a check is a blocker (e.g. inconclusive reviewer), state the commit is WITHHELD and why. Use the literal phrase 'Definition of Done'. Keep tight and consistent with existing AskUserQuestion relay voice.",
+    "CHARTER.md — in 'The two gates' (Gate 2 row / following paragraph) and/or the 'Definition of Done' section, document the same standing rule: the CTO relays the DoD rationale at Gate 2 conversationally (the why-it-can-commit, or why-withheld), consistent with the auto-commit message body and done_evaluated event already carrying that checklist. No unrelated rewrites.",
+    "Self-check the doc assertions locally: grep -q 'Definition of Done' in both files; confirm git diff --name-only shows no .ts/.pi/foreman.json/crew changes; sanity-run the existing suites the per-round gate covers."
+  ],
+  "filesLikely": [
+    "extensions/foreman/AGENTS.md",
+    "extensions/foreman/docs/CHARTER.md"
+  ],
+  "risks": [
+    "AGENTS.md currently uses 'DoD' not the literal 'Definition of Done'; the verify grep will fail unless the exact phrase is added there. CHARTER.md already has the heading so its grep passes — still add the standing-rule sentence.",
+    "Scope discipline: must not touch any .ts (done.ts/index.ts/ship.ts/gates.ts/reviewer.ts/planner.ts), crew/*.md, dashboard, tests, or .pi/foreman.json. Code is already wired; this is purely CTO-behavior documentation.",
+    "Working tree already has dirty .pi/plans/*/{log.jsonl,state.json} (normal ledger churn) and untracked plan dirs; the verify's git diff --name-only is scoped to '*.ts' '.pi/foreman.json' 'extensions/foreman/crew', so this churn won't fail the assertion — do not 'clean it up'.",
+    "The task's described verify (doc grep + scoped diff + full suite incl. ship_test.sh/done_test.sh) is broader than the currently-resolved per-round 'verify' gate in .pi/foreman.json (which omits ship/done tests and adds the planner.md grep). I am reflecting the existing gates, not overwriting; the controller's verify exit code is ground truth at run time.",
+    "Handoff note: when this task reaches Gate 2 and the founder approves, the resulting auto-commit message should now contain the 'Definition of Done:' block (wired in the prior task, live after restart) — a live demonstration that the rationale is recorded."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ]
+}

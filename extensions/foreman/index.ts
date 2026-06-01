@@ -57,6 +57,7 @@ import {
 	serializePlannerPlan,
 	validatePlannerPlan,
 } from "./planner.ts";
+import { decideReviewOutcome, parseReviewVerdict, type ReviewVerdict } from "./reviewer.ts";
 
 // Stronger model the frontend track falls back to when Gemini fails to drive the tools.
 const UI_FALLBACK_MODEL = "cliproxy/claude-opus-4-8:xhigh";
@@ -168,16 +169,31 @@ function contentPreview(value: unknown): string {
 }
 
 function makeTranscriptWriter(transcriptPath: string): (event: Record<string, unknown>) => void {
-	fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
-	fs.writeFileSync(transcriptPath, "", { flag: "a" });
-	let written = fs.statSync(transcriptPath).size;
+	// Transcripts are best-effort telemetry. They are written from stream `data` handlers (not awaited,
+	// not inside a try/catch), so a throw here becomes an uncaughtException that kills ALL of pi. The
+	// task dir can legitimately vanish mid-run (a concurrent `git clean`/reset, or another session
+	// wiping the tree). NEVER let a transcript write crash the orchestrator — swallow every fs error.
+	let disabled = false;
+	let written = 0;
+	try {
+		fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+		fs.writeFileSync(transcriptPath, "", { flag: "a" });
+		written = fs.statSync(transcriptPath).size;
+	} catch {
+		disabled = true;
+	}
 	return (event) => {
-		if (written >= PER_TASK_OUTPUT_CAP) return;
+		if (disabled || written >= PER_TASK_OUTPUT_CAP) return;
 		const line = `${JSON.stringify({ t: new Date().toISOString(), ...event })}\n`;
 		const lineBytes = byteLength(line);
 		if (written + lineBytes > PER_TASK_OUTPUT_CAP) return;
-		fs.appendFileSync(transcriptPath, line);
-		written += lineBytes;
+		try {
+			fs.appendFileSync(transcriptPath, line);
+			written += lineBytes;
+		} catch {
+			// Task dir disappeared (concurrent clean / wipe) or disk error. Stop writing; keep the loop alive.
+			disabled = true;
+		}
 	};
 }
 
@@ -393,6 +409,50 @@ function formatCommandGateResults(results: CommandGateResult[], outputCapPerGate
 			return [`[${result.name}] \`${result.command}\``, `Exit code: ${result.exitCode}`, "Output:", output].join("\n");
 		})
 		.join("\n\n");
+}
+
+function formatReviewItems(items: string[], empty = "- (none)"): string {
+	return items.length ? items.map((item) => `- ${item}`).join("\n") : empty;
+}
+
+function reviewSuccessState(review: ReviewVerdict): SuccessState {
+	if (review.decision === "approve") return "success";
+	if (review.decision === "request-changes") return "fail";
+	return "blocked";
+}
+
+function reviewSummaryLine(gate: Gate, review: ReviewVerdict): string {
+	if (review.decision === "approve") {
+		return `- ${gate.name}: APPROVE${review.nits.length ? ` (${review.nits.length} nit${review.nits.length === 1 ? "" : "s"})` : ""}`;
+	}
+	if (review.decision === "request-changes") {
+		return `- ${gate.name}: REQUEST-CHANGES (${review.blocking.length} blocking)`;
+	}
+	return `- ${gate.name}: INCONCLUSIVE (could not parse REVIEW line; founder must decide)`;
+}
+
+function reviewerTaskFor(context: {
+	cwd: string;
+	task: string;
+	round: number;
+	gate: Gate;
+	testerSummary: string;
+	preShipCommandSummary?: string;
+}): string {
+	return [
+		`Run pre-ship code review gate "${context.gate.name}" for this task in ${context.cwd}.`,
+		`Task: ${context.task}`,
+		`Round: ${context.round}`,
+		"The work already passed per-round command gates and tester judgment. Do not rerun the test suite.",
+		`Tester summary: ${context.testerSummary}`,
+		context.preShipCommandSummary
+			? `Pre-ship command gates already passed:\n${context.preShipCommandSummary}`
+			: "No pre-ship command gates ran before this review.",
+		"",
+		"Use `git diff --stat` and `git diff` to inspect the changed code. Review for correctness beyond tests, security, maintainability, architecture consistency, scope creep, and missing real-boundary error handling.",
+		"You are read-only: do not edit files, do not install dependencies, and do not mutate the repo.",
+		"Emit exactly one REVIEW line: `REVIEW: APPROVE` or `REVIEW: REQUEST-CHANGES`. If requesting changes, include a BLOCKING section with file:line bullets. Put nits in a separate NITS section.",
+	].join("\n");
 }
 
 function foremanManifestPath(cwd: string): string {
@@ -1105,15 +1165,188 @@ export default function (pi: ExtensionAPI) {
 
 				// ---- DECIDE ----
 				if (successState === "success") {
-					// TODO(Phase C): run declared pre-ship gates here before opening Gate 2.
+					const preShipGates = gatesForStage(gates, "pre-ship");
+					const preShipSummaryLines: string[] = [];
+
+					if (preShipGates.length) {
+						const preShipCommandGates = preShipGates.filter((gate) => gate.kind === "command" && gate.command);
+						const preShipJudgeGates = preShipGates.filter((gate) => gate.kind === "judge" && gate.agent);
+						const preShipActionGates = preShipGates.filter((gate) => gate.kind === "action");
+						const preShipCommandSummaryLines: string[] = [];
+
+						if (preShipActionGates.length) {
+							appendLog(cwd, slug, {
+								type: "pre_ship_action_gates_skipped",
+								round,
+								gates: preShipActionGates.map((gate) => gate.name),
+							});
+							preShipSummaryLines.push(
+								...preShipActionGates.map((gate) => `- ${gate.name}: SKIPPED (action gates are not supported at pre-ship)`),
+							);
+						}
+
+						if (preShipCommandGates.length) {
+							emit(`Round ${round}: pre-ship command gates ${preShipCommandGates.map((gate) => gate.name).join(", ")}...`);
+							appendLog(cwd, slug, {
+								type: "pre_ship_command_gates_started",
+								round,
+								gates: preShipCommandGates.map((gate) => ({ name: gate.name, command: gate.command })),
+							});
+							writeActivity(cwd, slug, {
+								round,
+								phase: "verify",
+								activeTranscript: null,
+								note: `running pre-ship gates: ${preShipCommandGates.map((gate) => gate.name).join(", ")}`,
+								pid: process.pid,
+								ownerSessionId: sessionId,
+							});
+							pushStatus();
+							startSpinner();
+							const preShipCommandRun = await runCommandGates(gates, "pre-ship", cwd, signal);
+							stopSpinner();
+							const preShipFailedGate = preShipCommandRun.results.find((result) => result.exitCode !== 0);
+							const preShipCommandOutput = formatCommandGateResults(preShipCommandRun.results, 2000);
+							appendLog(cwd, slug, {
+								type: "pre_ship_command_gates_ran",
+								round,
+								passed: preShipCommandRun.passed,
+								gates: preShipCommandRun.results.map((result) => ({ name: result.name, command: result.command, exitCode: result.exitCode })),
+							});
+
+							if (!preShipCommandRun.passed) {
+								const failedContext = preShipFailedGate
+									? `Pre-ship command gate "${preShipFailedGate.name}" \`${preShipFailedGate.command}\` exited ${preShipFailedGate.exitCode}.\nOutput:\n${preShipFailedGate.output.slice(-1500)}`
+									: `Pre-ship command gates failed.\nOutput:\n${preShipCommandOutput.slice(-1500)}`;
+								appendLog(cwd, slug, { type: "pre_ship_failed", round, kind: "command", gate: preShipFailedGate?.name });
+								emit(`Round ${round}: pre-ship command gate FAILED${preShipFailedGate ? ` (${preShipFailedGate.name})` : ""}; reopening developer round.`);
+								devContext =
+									`Continue task in ${cwd}: ${state.task}\n\n` +
+									`Round ${round} passed per-round verification, but a pre-ship command gate failed.\n\n` +
+									`${failedContext}\n\nFix ONLY what this pre-ship failure points to.`;
+								continue;
+							}
+
+							preShipCommandSummaryLines.push(...preShipCommandRun.results.map((result) => `- ${result.name}: PASS (\`${result.command}\`)`));
+							preShipSummaryLines.push(...preShipCommandSummaryLines);
+							emit(`Round ${round}: pre-ship command gates passed.`);
+						}
+
+						let reopenFromPreShipReview = false;
+						for (const gate of preShipJudgeGates) {
+							const reviewerAgentName = gate.agent ?? "reviewer";
+							emit(`Round ${round}: pre-ship judge ${gate.name} (${reviewerAgentName})...`);
+							appendLog(cwd, slug, { type: "pre_ship_reviewer_started", round, gate: gate.name, agent: reviewerAgentName });
+							const reviewSession = randomUUID();
+							const reviewTranscript = transcriptFilePath(cwd, slug, "tester", round, reviewSession);
+							writeActivity(cwd, slug, {
+								round,
+								phase: "tester",
+								activeTranscript: path.basename(reviewTranscript),
+								note: `pre-ship judge ${gate.name} running…`,
+								pid: process.pid,
+								ownerSessionId: sessionId,
+							});
+							pushStatus();
+							startSpinner();
+							let reviewRun: RunResult;
+							try {
+								const reviewAgent = loadAgent(reviewerAgentName);
+								reviewRun = await runAgent(
+									reviewAgent,
+									reviewerTaskFor({
+										cwd,
+										task: state.task,
+										round,
+										gate,
+										testerSummary: testHandoff.summary,
+										preShipCommandSummary: preShipCommandSummaryLines.join("\n"),
+									}),
+									cwd,
+									{ role: "tester", round, transcriptPath: reviewTranscript, signal },
+								);
+							} catch (error) {
+								reviewRun = { text: `Reviewer gate "${gate.name}" could not run: ${String(error)}`, exitCode: 1, stderr: String(error) };
+							} finally {
+								stopSpinner();
+							}
+
+							const parsedReview = parseReviewVerdict(reviewRun.text);
+							const review: ReviewVerdict =
+								reviewRun.exitCode === 0 || parsedReview.decision === "request-changes" ? parsedReview : { ...parsedReview, decision: "unknown" };
+							const reviewDecision = decideReviewOutcome(review);
+							// Handoff.role intentionally remains "tester" to avoid a ledger schema change;
+							// the summary prefix and explicit pre_ship_reviewer_* log events distinguish reviewer output.
+							const reviewHandoff: Handoff = {
+								timestamp: new Date().toISOString(),
+								role: "tester",
+								round,
+								sessionId: reviewSession,
+								successState: reviewSuccessState(review),
+								summary: `[reviewer] ${gate.name}: ${review.decision}${reviewDecision.flagged ? " (inconclusive)" : ""}`.slice(0, 200),
+								raw: reviewRun.text || `(no reviewer output; stderr: ${reviewRun.stderr})`,
+							};
+							writeHandoff(cwd, slug, reviewHandoff);
+							appendLog(cwd, slug, {
+								type: "pre_ship_reviewer_verdict",
+								round,
+								gate: gate.name,
+								agent: reviewerAgentName,
+								exitCode: reviewRun.exitCode,
+								decision: review.decision,
+								action: reviewDecision.action,
+								blocking: review.blocking,
+								nits: review.nits,
+							});
+							state.lastReviewedHandoffCount = listHandoffs(cwd, slug).length;
+							writeState(cwd, state);
+
+							preShipSummaryLines.push(reviewSummaryLine(gate, review));
+							if (review.nits.length) preShipSummaryLines.push(`  NITS:\n${formatReviewItems(review.nits).replace(/^/gm, "  ")}`);
+
+							if (reviewDecision.reopen) {
+								appendLog(cwd, slug, { type: "pre_ship_failed", round, kind: "judge", gate: gate.name, agent: reviewerAgentName });
+								emit(`Round ${round}: pre-ship reviewer requested changes; reopening developer round.`);
+								devContext =
+									`Continue task in ${cwd}: ${state.task}\n\n` +
+									`Round ${round} passed per-round verification, but pre-ship reviewer gate "${gate.name}" requested changes.\n\n` +
+									`Reviewer BLOCKING findings:\n${formatReviewItems(review.blocking)}\n` +
+									(review.nits.length ? `\nReviewer NITS (non-blocking; do not reopen by themselves):\n${formatReviewItems(review.nits)}\n` : "") +
+									"\nFix ONLY the blocking issues required for reviewer approval.";
+								reopenFromPreShipReview = true;
+								break;
+							}
+
+							if (reviewDecision.flagged) {
+								// Unknown reviewer output is not approval, but reopening would burn all rounds on
+								// a flaky parse. Proceed to Gate 2 flagged so the founder makes the ship decision.
+								preShipSummaryLines.push("  ⚠ Reviewer output was inconclusive; inspect the [reviewer] handoff before approving ship.");
+							}
+							emit(`Round ${round}: pre-ship judge ${gate.name} ${review.decision.toUpperCase()}.`);
+						}
+						if (reopenFromPreShipReview) continue;
+
+						appendLog(cwd, slug, { type: "pre_ship_passed", round, summary: preShipSummaryLines });
+						writeActivity(cwd, slug, {
+							round,
+							phase: "idle",
+							activeTranscript: null,
+							note: `pre-ship passed: ${preShipSummaryLines.join(" ").slice(0, 400)}`,
+							pid: process.pid,
+							ownerSessionId: sessionId,
+						});
+						pushStatus();
+					}
+
 					// ---- GATE 2: SHIP APPROVAL (verification passed; founder OKs before done) ----
 					state.state = "awaiting_ship";
 					writeState(cwd, state);
-					appendLog(cwd, slug, { type: "gate2_awaiting", round });
+					appendLog(cwd, slug, { type: "gate2_awaiting", round, preShipSummary: preShipSummaryLines.length ? preShipSummaryLines : undefined });
+					const preShipSummary = preShipSummaryLines.length ? `Pre-ship checks:\n${preShipSummaryLines.join("\n")}\n` : "";
 					emit(
 						`\n=== GATE 2 / SHIP — approval needed (round ${round}) ===\n` +
 							`Verification passed and the tester judged the work satisfies: ${state.task}\n` +
 							`Summary: ${testHandoff.summary}\n` +
+							preShipSummary +
 							`Approve:  foreman({ resume: true, approve: true })\n` +
 							`Revise:   foreman({ resume: true, reject: "<what to change>" })`,
 					);

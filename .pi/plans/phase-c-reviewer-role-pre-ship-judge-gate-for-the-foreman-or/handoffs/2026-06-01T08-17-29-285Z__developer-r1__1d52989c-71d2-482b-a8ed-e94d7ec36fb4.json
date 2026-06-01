@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-06-01T08:17:29.285Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "1d52989c-71d2-482b-a8ed-e94d7ec36fb4",
+  "summary": "(no structured summary)",
+  "raw": "Gate 1 plan is ready.\n\nIt’s a generic fallback plan, but scoped correctly to the requested implementation and verify command. Approve to proceed, or tell me what to change."
+}

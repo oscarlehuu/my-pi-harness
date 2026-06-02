@@ -36,6 +36,8 @@ done
 # --- Foreman supplies the CTO persona + the crew it orchestrates ---
 link "$REPO_DIR/extensions/foreman/AGENTS.md" "$AGENT_DIR/AGENTS.md"
 link "$REPO_DIR/extensions/foreman/crew"      "$AGENT_DIR/agents"
+mkdir -p "$AGENT_DIR/foreman"
+link "$REPO_DIR/extensions/foreman/docs"      "$AGENT_DIR/foreman/charter"
 
 # --- Shared infra ---
 link "$REPO_DIR/config/models.json" "$AGENT_DIR/models.json"
@@ -53,6 +55,6 @@ PY
 
 echo "Installed into $AGENT_DIR:"
 echo "  extensions: $(ls "$AGENT_DIR/extensions" | tr '\n' ' ')"
-echo "  AGENTS.md, agents/, models.json -> workspace"
+echo "  AGENTS.md, agents/, foreman/charter, models.json -> workspace"
 echo "  default model: cliproxy/claude-opus-4-8:xhigh"
 echo "Run pi from any project. No PI_CODING_AGENT_DIR needed."

@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-06-02T03:36:05.921Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "5dd8fc61-af8f-4d32-a747-dfd1a134d938",
+  "summary": "(no structured summary)",
+  "raw": "Gate 2 needs founder approval.\n\nDoD: plan approved, verify command passed, tester SUCCESS, reviewer APPROVE, no pre-ship command gates declared. Only remaining item: founder ship sign-off.\n\nReply with:\n- `Approve` — ship/auto-commit\n- `Revise: <feedback>` — send back for changes"
+}

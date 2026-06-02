@@ -8,18 +8,18 @@ installed together. Philosophy: primitives, not features.
 
 ```
 extensions/
-  foreman/     orchestration domain — gated dev→test→fix loop + crew + CTO charter
+  foreman/     orchestration domain — gated planner→dev→test→review→ship loop + crew + CTO charter
     index.ts        the `foreman` tool (orchestrator)
-    ledger.ts       on-disk task state (.pi/plans/<task>/)
-    crew/           developer.md  ui-developer.md  scout.md  tester.md   (role defs, not code)
+    ledger.ts       on-disk task state (.pi/plans/<task>/) + agent-dir mirror
+    crew/           planner.md  developer.md  ui-developer.md  scout.md  tester.md  reviewer.md
     fallback.ts     frontend-track tool-failure detector (Gemini → Opus same-round fallback)
     AGENTS.md       CTO persona / project self-description
-    docs/           CHARTER.md  PHASE2-SPEC.md
-    test/           gate_flow_test.sh  (end-to-end acceptance)
+    docs/           CHARTER.md  charter/  DASHBOARD-SPEC.md
+    test/           gate_flow_test.sh  gates_test.sh  planner_test.sh  reviewer_test.sh  ...
   subagent/    spawn primitive — runs an agent in an isolated pi subprocess
   AskUserQuestion/  interactive ask-the-user UI primitive
   grok/        search + imagine domain — web/X search and image/video via Grok's subscription proxy
-    package.json      pi manifest (registers two tools from one domain)
+    package.json      pi manifest (registers multiple tools from one domain)
     _shared/grokClient.ts   reverse-engineered cli-chat-proxy client
     websearch/index.ts      the `grok-web-search` tool
     xsearch/index.ts        the `grok-x-search` tool
@@ -39,7 +39,7 @@ extensions/
 config/
   models.json  shared model routing (cliproxy + openai-codex)
 docs/
-  architecture.md  how pi loads; the install model
+  architecture.md  how pi loads; the install/link model
 install.sh     composes the workspace into ~/.pi/agent
 ```
 
@@ -52,6 +52,8 @@ under `extensions/`.
 
 `~/.pi/agent` is the live, machine-wide pi directory. This repo is the versioned source.
 `install.sh` symlinks each domain onto the flat names pi requires; secrets/sessions stay machine-local.
+It also exposes the Foreman framework charter at `~/.pi/agent/foreman/charter/CHARTER.md` so crew can
+read it from any target repo.
 
 ```bash
 ./install.sh             # symlink workspace into ~/.pi/agent (idempotent)
@@ -62,22 +64,25 @@ Do **not** set `PI_CODING_AGENT_DIR` for normal use; it replaces `~/.pi/agent` w
 
 ## The foreman loop
 
-`brainstorm → plan → [GATE 1] → implement → verify → test → (fix↺) → [GATE 2] → ship`
+`brainstorm → plan → [GATE 1] → implement → per-round command gates → test → pre-ship review → (fix↺) → [GATE 2] → ship + release actions`
 
 The CTO (main pi session) starts `foreman({ task, verifyCommand? })`; the machine runs the rest:
-controller runs the verify command (exit code = ground truth), tester judges intent + catches cheats,
-fails are retried up to a cap. Two human gates (plan, ship) pause for founder approval. Full manual:
+planner drafts the Gate 1 plan, controller runs command gates (exit code = ground truth), tester
+judges intent + catches cheats, pre-ship reviewer gates can judge ship risk, failures retry up to a
+cap, and two human gates (plan, ship) pause for founder approval. Full manual:
 `extensions/foreman/docs/CHARTER.md`.
 
 ## Roles & routing
 
 | Role | Model | Notes |
 |------|-------|-------|
-| CTO (main session) | cliproxy/claude-opus-4-8:xhigh | default/max reasoning; founder talks to this |
+| CTO (main session) | cliproxy/claude-opus-4-8:xhigh | founder talks to this; orchestrates only |
+| planner | cliproxy/claude-opus-4-8:xhigh | read-only Gate 1 planner; can propose gates |
 | scout | cliproxy/gemini-3.5-flash-low:high | recon, read-only |
 | developer | openai-codex/gpt-5.5:xhigh | implements backend/logic, full tools |
 | ui-developer | cliproxy/gemini-3.5-flash-low:high | frontend/UI with taste; `track:"frontend"`; falls back to opus-4-8:xhigh on tool failure |
 | tester | cliproxy/claude-opus-4-8:high | judges verification, read-only |
+| reviewer | cliproxy/claude-opus-4-8:xhigh | pre-ship code review judge, read-only |
 
 Thinking levels: `off|minimal|low|medium|high|xhigh` (`xhigh` = max). cliproxy agents use an
 **append-only** system prompt (preserves the Claude Code marker → Max subscription quota, not credits).

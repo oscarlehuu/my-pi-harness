@@ -92,8 +92,8 @@ Append-only JSONL; each line is one event captured from the subprocess stream:
   `tool_result_end` line-by-line; extend `onLine` to also emit `tool_call` and `text`).
 - Capped per file (reuse subagent's `PER_TASK_OUTPUT_CAP = 50KB`); truncate `args`/`preview`.
 - `.gitignore`: transcripts are **machine-local, not committed** (the existing `.pi/.gitignore`
-  already excludes `plans/*/transcripts/` — matches PHASE2-SPEC decision). The committed ledger
-  stays the summary (`state.json`, `handoffs/`, `log.jsonl`).
+  already excludes `plans/*/transcripts/`). The committed ledger stays the summary (`state.json`,
+  `handoffs/`, `log.jsonl`).
 
 ### A2. Live activity signal (the "what's working now")
 

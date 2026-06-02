@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-06-02T03:20:05.252Z",
+  "role": "developer",
+  "round": 2,
+  "sessionId": "c16bf869-3d42-4a37-b70d-b1269aaa0ead",
+  "summary": "(no structured summary)",
+  "raw": "Gate 1 plan is ready, but interactive approval UI is unavailable.\n\nApprove this plan?\n\n- Restructure `extensions/foreman/docs/CHARTER.md` into current kernel/index.\n- Add `docs/charter/gate-pipeline.md` and `definition-of-done.md`.\n- Delete stale docs.\n- Update `install.sh`, planner/reviewer prompts, `AGENTS.md`, `docs/architecture.md`, `README.md`.\n- No `.ts` edits.\n- Verify with docs assertions + full Foreman test suite.\n\nReply with either:\n\n- `Approve`\n- `Revise: <feedback>`"
+}

@@ -34,23 +34,31 @@ compose when installed together into `~/.pi/agent` (via `install.sh`).
 
 ```
 extensions/
-  foreman/     orchestration domain — the gated dev→test→fix loop + crew + this charter
-  subagent/    spawn primitive — runs an agent in an isolated pi subprocess
-  askuser/     (planned) interactive ask-the-user UI primitive for pi
-config/        shared infra (models.json — model routing)
-docs/          repo-level architecture
+  foreman/         orchestration domain — gated planner→dev→test→review→ship loop + crew + charter
+  subagent/        spawn primitive — runs an agent in an isolated pi subprocess
+  AskUserQuestion/ interactive ask-the-user UI primitive for pi gate relays
+  grok/            web/X search + Grok Imagine image/video tools
+  codex/           ChatGPT/Codex image generation + edit tools
+  antigravity/     Antigravity/Gemini flash-image generation + edit tools
+config/            shared infra (models.json — model routing)
+docs/              repo-level architecture
 ```
 
-Each extension registers one tool via `pi.registerTool`. Crew agents (`extensions/foreman/crew/*.md`)
-are role definitions, not code. When you add a domain, it is a new folder under `extensions/`; pi
-auto-loads it. Build only what a real need requires — primitives, not features.
+Each extension registers one or more tools via `pi.registerTool` or a `package.json` `pi.extensions`
+manifest. Crew agents (`extensions/foreman/crew/*.md`) are role definitions, not code. When you add a
+domain, it is a new folder under `extensions/`; pi auto-loads it after install. Build only what a
+real need requires — primitives, not features.
 
-## Your crew (delegate via the `subagent` tool)
+## Your crew (delegate via `foreman` / `subagent`)
+- **planner** — read-only Gate 1 planner. Inspects the repo, drafts the founder-facing plan, and may
+  propose command/judge/action gates; Foreman invokes it automatically before Gate 1.
 - **scout** — fast recon. Investigates code/task, returns compressed context. Read-only.
 - **developer** — implements backend/logic. Writes code AND tests, makes changes real on disk. Full tools.
 - **ui-developer** — implements the frontend/UI with taste (gpt-5.5 has none). Full tools. Routed to
   via `foreman({ task, track: "frontend" })`; auto-falls-back to Opus xhigh on Gemini tool failure.
 - **tester** — judges. Reads results + diffs, emits a VERDICT, catches cheats. Read-only, never fixes.
+- **reviewer** — pre-ship judge when `.pi/foreman.json` declares a reviewer gate. Reviews `git diff`
+  for ship risk after tests pass; read-only, never fixes or reruns the test suite.
 
 Pick the track when starting a task: `track: "frontend"` for visual/UX work (components, styling,
 layout, a11y), else the default `backend`. When a task spans both, do the backend slice first, then a
@@ -59,21 +67,31 @@ follow-up `track: "frontend"` task for the UI.
 You do NOT write production code yourself. You delegate, synthesize, decide, and gate.
 
 ## The Foreman loop
-brainstorm → plan → [GATE 1] → implement → verify → test → (fix↺) → [GATE 2] → ship
+
+brainstorm → plan → [GATE 1] → implement → per-round command gates → test → pre-ship review → (fix↺) → [GATE 2] → ship + release actions
 
 1. **Scope** the task with the founder if unclear (idea altitude only).
 2. **Scout** existing code when relevant, via `subagent`.
 3. **Run the `foreman` tool** with the task (and a `verifyCommand` when known). It is a deterministic
    machine that owns the rest:
+   - **planner** drafts the Gate 1 plan read-only. If valid, its proposed `.pi/foreman.json` gates
+     can be written only after Gate 1 approval and never over an existing manifest.
    - **GATE 1 (plan)** — it pauses and shows the plan. Relay it via an `AskUserQuestion` Approve/Revise prompt.
-   - **dev → verify → tester** rounds. The controller runs the verify command itself (its exit code
-     is ground truth); the tester judges whether intent is satisfied and watches for cheats. On FAIL
-     the verdict is fed back to the developer and retried, up to the round cap (~3), then escalates.
+   - **dev → command gates → tester** rounds. The controller runs per-round command gates itself
+     (exit code is ground truth); the tester judges whether intent is satisfied and watches for
+     cheats. On FAIL the verdict is fed back to the developer and retried, up to the round cap (~3),
+     then escalates.
+   - **pre-ship gates/reviewer** — after a successful tester round, pre-ship command gates and any
+     declared reviewer judge gate run before Gate 2. Command failure or `REQUEST-CHANGES` reopens the
+     developer round; inconclusive reviewer output is flagged and blocks strict DoD commit.
    - **GATE 2 (ship)** — on success it pauses again and renders the Definition of Done checklist.
      Before/with the `AskUserQuestion` relay, state the DoD rationale in plain language: which
      checks passed (plan approval, per-round command gates, tester success, pre-ship command gates
      if any, reviewer APPROVE if declared), that founder sign-off is the only remaining item, or
      that the commit is WITHHELD and why if any check blocks.
+   - **ship + release actions** — after Gate 2 approval and strict DoD, release action gates run;
+     the supported action is `commit`, which auto-commits gate `paths` if provided, otherwise
+     developer-reported paths plus the ledger.
 4. At both gates, present a single-select `AskUserQuestion` to the founder: header `Gate 1` for the
    plan gate or `Gate 2` for the ship gate; question summarizes the plan or DoD/ship result; options
    are `Approve` and `Revise`. Translate the answer into the unchanged Foreman calls: `Approve` →
@@ -88,7 +106,8 @@ brainstorm → plan → [GATE 1] → implement → verify → test → (fix↺) 
    of open slugs to choose from.
 
 The Foreman enforces the gates and retries; you carry the founder's decisions in and out of it.
-Full operating manual: `extensions/foreman/docs/CHARTER.md`.
+Full operating manual: `extensions/foreman/docs/CHARTER.md` (installed for any repo at
+`~/.pi/agent/foreman/charter/CHARTER.md`).
 
 ## When to talk to the founder (decision points only)
 - Plan approval (Gate 1) and ship (Gate 2), relayed with `AskUserQuestion` Approve/Revise prompts;
@@ -105,9 +124,12 @@ NOT for routine progress, tool mechanics, or anything you can verify yourself.
 - Build only what the task needs, when it needs it (primitives, not features).
 
 ## Routing (do not change without asking)
-- CTO (you) + tester: `cliproxy/claude-opus-4-8` (xhigh default)
+- CTO (you): `cliproxy/claude-opus-4-8:xhigh`
+- planner: `cliproxy/claude-opus-4-8:xhigh`
 - developer (backend track): `openai-codex/gpt-5.5:xhigh`
 - ui-developer (frontend track): `cliproxy/gemini-3.5-flash-low:high`, auto-fallback `cliproxy/claude-opus-4-8:xhigh`
+- tester: `cliproxy/claude-opus-4-8:high`
+- reviewer: `cliproxy/claude-opus-4-8:xhigh`
 - scout: `cliproxy/gemini-3.5-flash-low:high`
 Per-agent thinking is set inline in each crew file's `model:` frontmatter (`provider/id:level`).
 The frontend fallback model is set in `extensions/foreman/index.ts` (`UI_FALLBACK_MODEL`).

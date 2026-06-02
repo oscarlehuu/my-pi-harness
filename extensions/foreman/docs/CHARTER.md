@@ -1,123 +1,82 @@
-# Company Charter
+# Foreman Framework Charter
 
-The operating manual for this harness. One founder, one CTO, a small crew, one loop, two gates.
-This is the reusable IP — the roles and rules survive any individual task.
+The portable operating kernel for Foreman: one founder, one CTO, a small crew, a gated loop, and a
+strict ship contract that can run from any repo once installed.
 
 ## Principle
 
 The founder works at **decision altitude** (ideas, priorities, taste). The CTO runs engineering on
-their behalf and talks to the founder **only at decision points**. Build only what the loop needs
-(primitives, not features). Verify with real calls, never assumptions; cite `file:line`.
+their behalf and talks to the founder **only at decision points**. Build reusable primitives, not
+one-off features. Verify with real calls, never assumptions; cite `file:line` when asserting code
+facts.
 
 ## Roles
 
 | Role | Model | Tools | Does | Never |
 |------|-------|-------|------|-------|
 | **Founder** | — (human) | — | Sets intent, approves gates, makes taste calls | Writes code |
-| **CTO** | `cliproxy/claude-opus-4-8:xhigh` | orchestration + `foreman`, `subagent` | Scopes, delegates, gates, synthesizes | Writes production code itself |
-| **scout** | `cliproxy/gemini-3.5-flash-low:high` | read, grep, find, ls | Fast recon, returns compressed context | Edits anything |
-| **developer** | `openai-codex/gpt-5.5:xhigh` | full tools | Implements backend/logic + tests on disk | Judges its own work |
-| **ui-developer** | `cliproxy/gemini-3.5-flash-low:high` (→ `claude-opus-4-8:xhigh` on tool failure) | full tools | Implements the frontend/UI with taste | Judges its own work |
-| **tester** | `cliproxy/claude-opus-4-8:high` | read, grep, find, ls, bash | Judges intent, catches cheats | Edits code / fixes |
+| **CTO** | `cliproxy/claude-opus-4-8:xhigh` | orchestration + `foreman`, `subagent`, `AskUserQuestion` | Scopes, delegates, relays gates, synthesizes decisions | Writes production code itself |
+| **planner** | `cliproxy/claude-opus-4-8:xhigh` | read, grep, find, ls, bash (read-only) | Drafts the Gate 1 plan, likely files, risks, and optional gate declarations | Edits files or implements |
+| **scout** | `cliproxy/gemini-3.5-flash-low:high` | read, grep, find, ls, bash (read-only) | Fast recon, returns compressed context | Edits anything |
+| **developer** | `openai-codex/gpt-5.5:xhigh` | full tools | Implements backend/logic and tests on disk | Judges its own work |
+| **ui-developer** | `cliproxy/gemini-3.5-flash-low:high` → `cliproxy/claude-opus-4-8:xhigh` fallback | full tools | Implements frontend/UI work with taste on `track:"frontend"` | Judges its own work |
+| **tester** | `cliproxy/claude-opus-4-8:high` | read, grep, find, ls, bash (read-only) | Judges intent after command gates, catches cheats | Edits or fixes |
+| **reviewer** | `cliproxy/claude-opus-4-8:xhigh` | read, grep, find, ls, bash (read-only) | Runs pre-ship code review when a reviewer judge gate is declared | Edits files or reruns the test suite |
 
-Routing lives in `config/models.json` (provider/model metadata) and each role's `model:` frontmatter
-(`provider/id:thinking`). Valid thinking levels: `off|minimal|low|medium|high|xhigh` (`xhigh` = max).
-
-### Tracks (who implements)
-
-The CTO tags each task with a **track**, defaulting to `backend`:
-- `foreman({ task, track: "backend" })` (default) → the **developer** (gpt-5.5) implements.
-- `foreman({ task, track: "frontend" })` → the **ui-developer** (Gemini 3.5 Flash) implements, because
-  gpt-5.5 lacks frontend taste. Gemini has taste but is unreliable at tool-calling, so the controller
-  **auto-falls-back within the same round** to `claude-opus-4-8:xhigh` if the Gemini run errors, emits
-  no DEV-JSON machine block, or changes no files on disk. The track persists in the ledger (survives
-  resume); the fallback is logged as a `ui_fallback` event. The ledger role/phase stays `developer`
-  either way, so the loop, gates, and dashboard are unchanged.
+Routing lives in `config/models.json`, each crew file's `model:` frontmatter, and the frontend
+fallback constant in `extensions/foreman/index.ts`. The backend track uses `developer`; the frontend
+track uses `ui-developer` and auto-falls back within the same round to Opus xhigh if Gemini fails to
+use tools, emits no DEV-JSON, or changes no files.
 
 ## The loop
 
-`brainstorm → plan → [GATE 1] → implement → verify → test → (fix↺) → [GATE 2] → ship`
+`brainstorm → plan → [GATE 1] → implement → verify → test → pre-ship review → (fix↺) → [GATE 2] → ship + auto-commit`
 
-Driven by the `foreman` tool (`extensions/foreman/`). The CTO starts it; the machine runs it.
+1. **Scope** with the founder only if the task is unclear; use `scout` for quick read-only recon when useful.
+2. **Plan**: starting `foreman({ task, verifyCommand?, track?, cwd?, maxRounds? })` invokes the read-only `planner` for a Gate 1 plan. If the planner is unavailable, times out, or emits invalid `PLAN-JSON`, Foreman uses a deterministic fallback plan. A valid planner plan may propose `.pi/foreman.json`; Foreman writes it only after Gate 1 approval and never overwrites an existing manifest.
+3. **Gate 1 relay**: the CTO presents a single-select `AskUserQuestion` with header `Gate 1`, summarizes the plan, and offers `Approve`/`Revise`. `Approve` maps to `foreman({ resume: true, approve: true })`; `Revise` or free-text feedback maps to `foreman({ resume: true, reject: "<feedback>" })`.
+4. **Implement**: the selected implementer makes the smallest scoped change and records a DEV-JSON handoff. `backend` routes to `developer`; `frontend` routes to `ui-developer` with same-round Opus fallback on tool failure.
+5. **Verify + test**: per-round command gates run first and their exit codes are ground truth. The `tester` then judges whether the work satisfies intent and catches cheats. `fail` loops back to the implementer until `maxRounds`; `partial` or `blocked` escalates.
+6. **Pre-ship review**: after a successful tester round, pre-ship command gates run and declared reviewer judge gates run. A pre-ship command failure or `REVIEW: REQUEST-CHANGES` reopens the developer round; inconclusive reviewer output proceeds to Gate 2 flagged but does not satisfy strict DoD.
+7. **Gate 2 relay**: the CTO presents `AskUserQuestion` header `Gate 2`, summarizes the ship result, and states the Definition of Done rationale in plain language: which checks passed or are n/a, that founder sign-off is the only remaining item, or that commit is WITHHELD and why. `Approve`/`Revise` map to the same unchanged `foreman({ resume: true, ... })` calls.
+8. **Ship**: only after strict DoD passes does Foreman mark the task done. Release action gates then run; the supported `commit` action stages gate `paths` if provided, otherwise developer-reported paths plus the ledger, writes a commit message with the DoD checklist, and auto-commits when the repo has staged changes. Without a release commit gate, Foreman marks done but does not commit.
 
-1. **Scope** with the founder if the task is unclear.
-2. **Scout** existing code when relevant (via `subagent`).
-3. `foreman({ task, verifyCommand?, cwd?, maxRounds? })` — pauses at **Gate 1**.
-4. After Gate 1 approval: **developer** implements → **controller runs the verify command** (its
-   exit code is ground truth) → **tester** judges whether the work satisfies intent and looks for
-   cheats (hardcoding, edited tests). A non-zero exit is always `fail`; a zero exit is `success`
-   unless the tester flags otherwise.
-5. On `fail`: the verdict is fed back to the developer; retry up to `maxRounds` (default 3), then
-   **escalate** to the founder.
-6. On `success`: pauses at **Gate 2**.
+Gate state, rounds, handoffs, transcripts, and logs persist under `<repo>/.pi/plans/<slug>/`, with an
+out-of-tree mirror under the agent dir so resume can self-heal after `git clean`, reset, or a crash.
 
-### Verdicts (what the tester returns)
-- `success` — verified and satisfies the task → Gate 2.
-- `fail` — retry the developer with the diagnosis.
-- `partial` — done but blocked by an off-scope issue → escalate.
-- `blocked` — cannot verify (no test, broken env) → escalate.
+## Gate pipeline
 
-## The two gates
-
-| Gate | When | Founder relay | Approve | Revise |
-|------|------|----------------|---------|--------|
-| **1 — Plan** | Before any code runs | `AskUserQuestion` header `Gate 1`; summarize the plan; options `Approve`/`Revise` | `foreman({ resume:true, approve:true })` → runs rounds | `foreman({ resume:true, reject:"…" })` → halts |
-| **2 — Ship** | After verification passes | `AskUserQuestion` header `Gate 2`; state the Definition of Done rationale (why commit is permitted or withheld) and summarize DoD/ship result; options `Approve`/`Revise` | `foreman({ resume:true, approve:true })` → done | `foreman({ resume:true, reject:"…" })` → reopens for another round |
-
-Gates are conversational and **persisted in the ledger**, so a killed/resumed session respects gate
-position. The CTO relays each gate to the founder with a single-select `AskUserQuestion` and carries
-the decision back by translating `Approve` to `foreman({ resume:true, approve:true })`; `Revise` or
-custom free-text feedback to `foreman({ resume:true, reject:"…" })` (plus `slug` when needed by
-normal resume semantics). The Foreman gate contract is unchanged; `AskUserQuestion` is only the CTO
-relay surface. If no UI is available (headless), fall back to the plain command relay;
-`AskUserQuestion` already degrades in headless mode.
+Foreman gates are generic declarations, not hardcoded test names: each gate has `{ name, kind,
+stage, command?, agent?, action?, paths? }`, with kind `command|judge|action` and stage
+`per-round|pre-ship|release`. Per-round command gates and the tester run each round; pre-ship
+command gates and reviewer judge gates run after a successful round before Gate 2; release action
+gates run only after Gate 2 approval and strict DoD. Full standalone details and examples live in
+[`charter/gate-pipeline.md`](charter/gate-pipeline.md).
 
 ## Definition of Done
 
-A task is **done** only when **all** hold:
-1. Gate 1 (plan) was approved.
-2. Per-round command gates passed, if declared (or the check is n/a when none ran).
-3. The tester judged `success` — intent satisfied, no cheats.
-4. Pre-ship command gates passed, if declared (or n/a when none exist).
-5. Any declared pre-ship reviewer gate returned a clean `APPROVE`; `REQUEST-CHANGES`, missing, or
-   inconclusive reviewer output blocks done.
-6. Gate 2 (ship) was approved by the founder.
+Foreman uses a strict, machine-evaluated Definition of Done: plan approved, per-round command gates
+passed or n/a, tester success, pre-ship command gates passed or n/a, reviewer `APPROVE` when a
+reviewer gate is declared, and founder Gate 2 approval. Any blocker means `done=false`; an
+inconclusive reviewer verdict blocks commit rather than silently force-shipping. Full standalone
+details live in [`charter/definition-of-done.md`](charter/definition-of-done.md).
 
-At Gate 2, before founder approval, the CTO relays this Definition of Done rationale: every
-non-founder check that passed or is n/a, that founder sign-off is the only remaining item, and
-therefore why the task is eligible to commit. If any check blocks, the CTO says commit is WITHHELD
-and gives the blocker instead of implying approval is enough. Foreman also renders the checklist at
-Gate 2, records the full checklist in the `done_evaluated` ledger event, and embeds the
-"Definition of Done:" block in the auto-commit message body.
+## Safety
 
-Anything short of this is `escalated`, `awaiting_ship`, `in_progress`, or `planning` — never done.
+Quota safety is non-negotiable: cliproxy/Anthropic crew agents use **append-only** system prompts
+(`--append-system-prompt`) so the Claude Code marker is preserved and calls draw on the Max
+subscription quota, not billed credits. Never replace that prompt with `--system-prompt`.
 
-## The ledger
+Route-through-Foreman safety is enforced by `guard.ts`: main-session `edit`/`write` and mutating
+`bash` calls that would make impactful repo changes are blocked with instructions to start a Foreman
+task instead. The guard allows read-only tools and no-impact paths such as prose docs, scratch dirs,
+or paths outside the repo; crew subprocesses set `FOREMAN_CREW=1`, and `/foreman-direct` is the
+explicit session escape hatch.
 
-Lives in the **target repo** at `<repo>/.pi/plans/<task-slug>/`, committed to git (only `plans/` is
-committed; a generated `.pi/.gitignore` excludes the rest). Contents:
-- `state.json` — task, slug, state, round, gate flags, verify command, cursor.
-- `plan.md` — the Gate 1 plan.
-- `handoffs/<ts>__<role>-r<n>__<uuid>.json` — every developer + tester handoff (controller always
-  writes one, even on parse failure).
-- `log.jsonl` — append-only event trail (gates, rounds, verdicts).
+## Docs structure
 
-**Durability (automatic, every repo).** The in-repo ledger can be destroyed by `git clean`, a reset,
-or a crashed tree rebuild before you commit. So Foreman also mirrors the committable files
-(`state.json`, `plan.md`, `log.jsonl`, `handoffs/`) out of tree to
-`<agentDir>/foreman/ledger-mirror/<repoKey>/plans/<slug>/` on every state change. On `resume`,
-Foreman first restores any task whose in-repo ledger is missing from that mirror, so a wiped task
-self-heals instead of vanishing. This is Foreman's job — no per-repo `.gitignore` or setup needed.
+One concept = one ## section. When a section exceeds ~40 lines or needs its own examples/sub-structure, graduate it to docs/charter/<concept>.md, leaving a one-paragraph summary + link here. CHARTER stays the index/kernel. Sections are written self-contained (no cross-references that break when moved).
 
-## When the CTO talks to the founder (only here)
-- Gate 1 (plan) and Gate 2 (ship).
-- Genuine forks where founder taste/priority matters.
-- Blockers unresolved after real investigation.
-
-Not for routine progress, tool mechanics, or anything verifiable without the founder.
-
-## Quota safety (non-negotiable)
-
-cliproxy/Anthropic agents use **append-only** system prompts (`--append-system-prompt`), preserving
-the Claude Code marker so calls draw on the Max subscription quota, not billed credits. Never use a
-replace-style `--system-prompt` on cliproxy agents.
+Current sub-pages:
+- [`charter/gate-pipeline.md`](charter/gate-pipeline.md) — generic gate declarations and execution stages.
+- [`charter/definition-of-done.md`](charter/definition-of-done.md) — strict DoD checks, blockers, and recording surfaces.

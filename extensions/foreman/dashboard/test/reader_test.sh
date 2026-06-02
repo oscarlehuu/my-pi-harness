@@ -40,6 +40,14 @@ function writeJsonl(file, events, trailing = "") {
   fs.writeFileSync(file, events.map((event) => JSON.stringify(event)).join("\n") + "\n" + trailing);
 }
 
+function stripAnsi(value) {
+  return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+function visibleLength(value) {
+  return [...stripAnsi(value)].length;
+}
+
 try {
   fs.mkdirSync(handoffsDir, { recursive: true });
   fs.mkdirSync(transcriptsDir, { recursive: true });
@@ -262,7 +270,7 @@ try {
   assert.equal(rows[2].summary, "Tests still fail");
   assert.equal(rows[2].live, false);
 
-  // --- statusline / status panel model + format ---
+  // --- footer statusline model + format ---
   const nowMs = Date.parse("2026-05-31T12:01:14.000Z");
   const slModel = reader.buildStatuslineModel(repo, { sessionId: "sess-owner", now: nowMs });
   assert.deepEqual(slModel.map((t) => t.slug), [slug, gateSlug, ownedDoneSlug], "statusline is scoped to the session's tasks");
@@ -275,7 +283,7 @@ try {
   assert.equal(liveStatus.toolCount, 2, "tool_call events are counted");
   assert.equal(liveStatus.ctxTokens, 44000, "latest usage.contextTokens is surfaced");
   assert.equal(liveStatus.elapsedMs, 72000, "elapsed is derived from agent_start.t and injected now");
-  assert.ok(liveStatus.label.length <= 37, "task label is bounded for the footer/panel");
+  assert.ok(liveStatus.label.length <= 37, "task label is bounded for the footer");
 
   const missingTranscriptModel = reader.buildStatuslineModel(repo, { sessionId: "sess-missing", now: nowMs });
   assert.equal(missingTranscriptModel[0].glyph, "running", "fresh missing transcript still marks the task running");
@@ -294,34 +302,56 @@ try {
   assert.equal(staleModel[0].phase, null, "stale activity is not treated as a live agent");
   assert.equal(staleModel[0].glyph, "idle", "in_progress with stale activity falls back to idle");
 
-  const slLine = reader.formatStatusline(slModel, { frame: 0 });
-  assert.ok(slLine.startsWith("foreman "), "statusline carries the foreman prefix");
-  assert.ok(slLine.includes("R1 dev"), "statusline shows the round + live developer agent");
+  const slLine = reader.formatStatusLine(slModel, { frame: 0, maxWidth: 160 });
+  assert.ok(slLine.startsWith("FOREMAN "), "footer line carries the FOREMAN brand prefix");
+  assert.ok(slLine.includes("DEV"), "footer line shows the live role badge");
+  assert.ok(slLine.includes("R1/3"), "footer line shows round/max");
+  assert.ok(slLine.includes("1m 12s"), "footer line shows elapsed time");
+  assert.ok(slLine.includes("editing index.ts"), "footer line shows the live action");
+  assert.ok(slLine.includes("◆ Phase B planner"), "footer line includes a short gate chip");
+  assert.ok(slLine.endsWith("✓1"), "footer line collapses done tasks into a trailing count chip");
+  assert.ok(!slLine.includes("Finished task should collapse"), "done tasks are not listed individually");
+  assert.ok(!slLine.includes("Other session task"), "footer excludes tasks owned by another session");
+  assert.ok(visibleLength(slLine) <= 160, "footer line respects the requested max width");
   assert.notEqual(
-    reader.formatStatusline(slModel, { frame: 0 }),
-    reader.formatStatusline(slModel, { frame: 1 }),
+    reader.formatStatusLine(slModel, { frame: 0, maxWidth: 160 }),
+    reader.formatStatusLine(slModel, { frame: 1, maxWidth: 160 }),
     "the live spinner animates across frames",
   );
-  assert.equal(reader.formatStatusline([]), "", "empty model clears the status line");
+  assert.equal(reader.formatStatusLine([]), "", "empty model clears the status line");
+  assert.equal(reader.formatStatusLine([{ ...slModel[2] }]), "", "done-only model clears the status line");
   assert.ok(
-    reader.formatStatusline(slModel, { color: (token, text) => `<${token}>${text}</${token}>`, frame: 0 }).includes("<accent>"),
+    reader.formatStatusLine(slModel, { color: (token, text) => `<${token}>${text}</${token}>`, frame: 0, maxWidth: 1000 }).includes("<accent>"),
     "format applies the injected colorizer",
   );
 
-  const panel0 = reader.formatStatusPanel(slModel, { frame: 0, width: 58 });
-  const panel1 = reader.formatStatusPanel(slModel, { frame: 1, width: 58 });
-  assert.ok(panel0.length <= 7, "panel respects the setWidget line budget");
-  assert.ok(panel0[0].startsWith("─ FOREMAN"), "panel title starts with the FOREMAN brand rule");
-  assert.ok(panel0[0].includes("2 active · 1 done"), "panel title summarizes active work and collapses done to a count");
-  assert.ok(!panel0.join("\n").includes("Finished task should collapse"), "done tasks are not rendered as individual blocks");
-  assert.ok(panel0[1].includes("DEV"), "running row includes a role badge");
-  assert.ok(panel0[1].includes("R1/3"), "running row includes round/max");
-  assert.ok(panel0[1].includes("1m 12s"), "running row includes elapsed time");
-  assert.ok(panel0[2].includes("↳ editing index.ts · 2 tools · 44k ctx"), "running row includes live action/tool/context details");
-  assert.ok(panel0.join("\n").includes("needs you: ship?"), "gate task asks for ship approval");
-  assert.notEqual(panel0[1], panel1[1], "panel spinner animates across frames");
-  assert.ok(!panel0.join("\n").includes("Other session task"), "panel excludes tasks owned by another session");
-  assert.deepEqual(reader.formatStatusPanel([]), [], "empty panel model renders no widget lines");
+  const verifyBadgeTask = {
+    slug: "verify-badge",
+    label: "Pimote daemon",
+    state: "in_progress",
+    phase: "verify",
+    glyph: "running",
+    round: 1,
+    maxRounds: 3,
+    detail: "verify",
+  };
+  const devBadgeTask = { ...verifyBadgeTask, slug: "dev-badge", phase: "developer", detail: "dev" };
+  const verifyBadgeLine = reader.formatStatusLine([verifyBadgeTask], { frame: 0, maxWidth: 120 });
+  const devBadgeLine = reader.formatStatusLine([devBadgeTask], { frame: 0, maxWidth: 120 });
+  assert.ok(verifyBadgeLine.includes("VERIFY Pimote daemon"), "VERIFY badge keeps a trailing gap before the label");
+  assert.ok(!verifyBadgeLine.includes("VERIFYPimote daemon"), "VERIFY badge is not flush against the label");
+  assert.equal(
+    verifyBadgeLine.indexOf("Pimote daemon"),
+    devBadgeLine.indexOf("Pimote daemon"),
+    "DEV and VERIFY badges share a fixed badge column",
+  );
+
+  const longLabelLine = reader.formatStatusLine(
+    [{ ...verifyBadgeTask, label: "Fix two cosmetic bugs in the Foreman status panel shipped in commit b3bac70…" }],
+    { frame: 0, maxWidth: 80 },
+  );
+  assert.ok(!longLabelLine.includes("…"), "footer word-clips labels without a Unicode ellipsis");
+  assert.ok(longLabelLine.includes("Fix two cosmetic bugs"), "footer keeps the useful head of a long label");
 
   const sorted = reader.sortForPicker(
     [
@@ -337,7 +367,7 @@ try {
   assert.deepEqual(
     sorted.map((task) => task.slug),
     ["live-mine", "live-other", "gate", "progress", "done"],
-    "picker sort orders attention first, then yours before others at equal attention, then done last",
+    "picker sort orders attention first, then this session before others at equal attention, then done last",
   );
 
   console.log("Foreman dashboard reader tests passed");

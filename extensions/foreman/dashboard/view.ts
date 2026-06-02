@@ -448,10 +448,14 @@ export class ForemanDashboard extends Container implements Focusable {
 		return Boolean(this.sessionId && task.ownerSessionId === this.sessionId);
 	}
 
+	private sessionBadge(ownerSessionId: string | undefined): string {
+		if (!ownerSessionId) return this.theme.fg("dim", "—");
+		if (this.sessionId && ownerSessionId === this.sessionId) return this.theme.fg("accent", "● this session");
+		return this.theme.fg("dim", "○ other session");
+	}
+
 	private ownerBadge(task: ForemanTaskSummary | undefined): string {
-		if (!task?.ownerSessionId) return this.theme.fg("dim", "—");
-		if (this.isMine(task)) return this.theme.fg("accent", "● yours");
-		return this.theme.fg("dim", `session ${task.ownerSessionId.slice(0, 6)}`);
+		return this.sessionBadge(task?.ownerSessionId);
 	}
 
 	private currentStatusTask(slug: string): StatuslineTask | undefined {
@@ -470,8 +474,8 @@ export class ForemanDashboard extends Container implements Focusable {
 
 	private renderPicker(width: number): string[] {
 		const height = this.viewportHeight();
-		const yours = this.allTasks.filter((task) => this.isMine(task)).length;
-		const taskSummary = `${this.allTasks.length} task${this.allTasks.length === 1 ? "" : "s"} · ${yours} yours${this.mineOnly ? " · mine only" : ""}`;
+		const thisSession = this.allTasks.filter((task) => this.isMine(task)).length;
+		const taskSummary = `${this.allTasks.length} task${this.allTasks.length === 1 ? "" : "s"} · ${thisSession} this session${this.mineOnly ? " · mine only" : ""}`;
 		const header = [
 			this.borderTitle("FOREMAN", taskSummary, width),
 			this.theme.fg("dim", `cwd: ${this.cwd}`),
@@ -536,9 +540,10 @@ export class ForemanDashboard extends Container implements Focusable {
 		const running = live
 			? this.theme.fg("accent", this.agentLiveSummary(view.slug, "● running"))
 			: this.theme.fg("muted", "○ replay");
+		const transcriptLabel = run ? `${run.role} r${run.round}` : "transcript";
 		const header = [
 			this.borderTitle(`← ${view.role} · round ${view.round}`, `${start?.model ?? "model?"}   ${running}`, width),
-			this.theme.fg("dim", `${view.file}${run?.sessionId ? ` · ${run.sessionId}` : ""}`),
+			this.theme.fg("dim", `${transcriptLabel} · ${this.sessionBadge(run?.sessionId)}`),
 			this.separator(width),
 		];
 		const footer = [

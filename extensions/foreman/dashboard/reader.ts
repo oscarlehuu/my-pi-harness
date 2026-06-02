@@ -588,53 +588,23 @@ const GLYPH_COLOR: Record<StatuslineGlyph, string> = {
 	idle: "muted",
 };
 
-export interface FormatStatuslineOptions {
-	/** Max task segments to show before collapsing the rest into a "+N" suffix. Default 3. */
-	maxTasks?: number;
+export interface FormatStatusLineOptions {
+	/** Visible footer budget to target before pi applies its own terminal truncation. Default 160. */
+	maxWidth?: number;
 	/** Colorizer (token, text) => text. Default identity (plain text, used by tests). */
 	color?: (token: string, text: string) => string;
 	/** Animation frame for the live spinner (0..n). Lets the running task pulse. */
 	frame?: number;
+	/** Reserved for deterministic callers; elapsed is precomputed in the model. */
+	now?: number;
+}
+
+export interface FormatStatuslineOptions extends FormatStatusLineOptions {
+	/** Back-compat no-op; the footer now compacts by width instead of a task count. */
+	maxTasks?: number;
 }
 
 const SPINNER = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"]; // braille dots
-
-/**
- * Render the statusline model to a single footer line. Designed to read well, not just fit:
- *   foreman  ⠋ Pimote daemon · R2 dev   ✓ AskUserQuestion parity
- * Each task is `<glyph> <label> · <round> <detail>`; the live task gets a spinner + accented label.
- * Pure; color + spinner frame are injectable for tests.
- */
-export function formatStatusline(model: StatuslineTask[], opts: FormatStatuslineOptions = {}): string {
-	if (model.length === 0) return "";
-	const maxTasks = opts.maxTasks ?? 3;
-	const color = opts.color ?? ((_token, text) => text);
-	const shown = model.slice(0, maxTasks);
-	const segments = shown.map((t) => {
-		const live = t.glyph === "running";
-		const glyph = live
-			? color("accent", SPINNER[(opts.frame ?? 0) % SPINNER.length])
-			: color(GLYPH_COLOR[t.glyph], GLYPHS[t.glyph]);
-		const label = color(live ? "accent" : t.glyph === "done" ? "muted" : "text", t.label);
-		// round + detail tail, e.g. "R2 dev" or "ship?"; skip round when not started
-		const roundTag = t.round > 0 && t.state !== "done" ? `R${t.round} ` : "";
-		const tail = color("muted", `${roundTag}${t.detail}`);
-		return `${glyph} ${label} ${color("dim", "\u00b7")} ${tail}`;
-	});
-	const hidden = model.length - shown.length;
-	if (hidden > 0) segments.push(color("muted", `+${hidden} more`));
-	const sep = color("dim", "   ");
-	return `${color("muted", "foreman")}  ${segments.join(sep)}`;
-}
-
-export interface FormatStatusPanelOptions extends FormatStatuslineOptions {
-	/** Visible width for the title rule/right summary. Default 80. */
-	width?: number;
-	/** Max non-done task blocks before collapsing into a +N line. Default 4. */
-	maxTasks?: number;
-	/** Hard cap for setWidget lines. Default 7. */
-	maxLines?: number;
-}
 
 export interface SortForPickerOptions {
 	/** Slugs with fresh non-idle activity; these sort above gated/stuck work. */
@@ -673,85 +643,132 @@ export function formatElapsed(ms: number | undefined): string {
 	return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
-function formatPanelTokens(tokens: number): string {
-	if (tokens < 1000) return tokens.toString();
-	if (tokens < 10000) return `${(tokens / 1000).toFixed(1)}k`;
-	if (tokens < 1000000) return `${Math.round(tokens / 1000)}k`;
-	return `${(tokens / 1000000).toFixed(1)}M`;
+function stripAnsi(value: string): string {
+	return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
-function panelTitle(activeCount: number, doneCount: number, width: number, color: (token: string, text: string) => string): string {
-	const summaryParts: string[] = [];
-	if (activeCount > 0) summaryParts.push(`${activeCount} active`);
-	if (doneCount > 0) summaryParts.push(`${doneCount} done`);
-	const summary = summaryParts.join(" · ");
-	const left = "─ FOREMAN ";
-	const summaryGap = summary ? 2 : 0;
-	const fill = "─".repeat(Math.max(1, width - left.length - summary.length - summaryGap));
-	return `${color("accent", `${left}${fill}`)}${summary ? `  ${color("muted", summary)}` : ""}`;
+function visibleLength(value: string): number {
+	return [...stripAnsi(value)].length;
 }
 
-function renderPanelBlock(task: StatuslineTask, color: (token: string, text: string) => string, frame: number): string[] {
+function compactText(value: string): string {
+	return value.replace(/[\n\t]+/g, " ").replace(/\s+/g, " ").replace(/\u2026/g, "").trim();
+}
+
+function wordClip(text: string, max: number, maxWords = Number.POSITIVE_INFINITY): string {
+	const compact = compactText(text);
+	if (!compact || max <= 0) return "";
+	const words = compact.split(" ");
+	const wordLimited = Number.isFinite(maxWords) ? words.slice(0, Math.max(1, maxWords)).join(" ") : compact;
+	if ([...wordLimited].length <= max) return wordLimited;
+	const clipped = [...wordLimited].slice(0, max).join("").trimEnd();
+	const lastSpace = clipped.lastIndexOf(" ");
+	return (lastSpace > 0 ? clipped.slice(0, lastSpace) : clipped).trimEnd();
+}
+
+function footerLabel(label: string, max: number, maxWords = Number.POSITIVE_INFINITY): string {
+	return wordClip(label, max, maxWords) || wordClip(label, max);
+}
+
+function footerLiveAction(action: string): string {
+	const clean = compactText(action);
+	if (!clean) return "";
+	if (clean.startsWith("running ")) return `running ${wordClip(clean.slice("running ".length), 24)}`.trim();
+	return wordClip(clean, 32);
+}
+
+function gatePrompt(task: StatuslineTask): string {
+	return task.state === "planning" ? "plan?" : "ship?";
+}
+
+function renderLeadTask(
+	task: StatuslineTask,
+	color: (token: string, text: string) => string,
+	frame: number,
+	labelMax: number,
+	runningTailLevel = 2,
+): string {
+	const label = footerLabel(task.label, labelMax);
 	if (task.glyph === "running") {
 		const spinner = color("accent", SPINNER[frame % SPINNER.length]);
-		const badge = color("accent", roleBadge(task).padEnd(6));
+		const badge = color("accent", roleBadge(task).padEnd(7));
 		const tailParts = [`R${task.round}/${task.maxRounds || "?"}`];
 		const elapsed = formatElapsed(task.elapsedMs);
-		if (elapsed) tailParts.push(elapsed);
-		const lines = [`${spinner} ${badge}${color("text", task.label)} ${color("dim", "·")} ${color("muted", tailParts.join(" · "))}`];
-		const subParts: string[] = [];
-		if (task.liveAction) subParts.push(task.liveAction);
-		if (task.toolCount !== undefined) subParts.push(`${task.toolCount} tool${task.toolCount === 1 ? "" : "s"}`);
-		if (task.ctxTokens !== undefined) subParts.push(`${formatPanelTokens(task.ctxTokens)} ctx`);
-		if (subParts.length > 0) lines.push(color("dim", `  ↳ ${subParts.join(" · ")}`));
-		return lines;
+		if (runningTailLevel >= 1 && elapsed) tailParts.push(elapsed);
+		if (runningTailLevel >= 2 && task.liveAction) {
+			const action = footerLiveAction(task.liveAction);
+			if (action) tailParts.push(action);
+		}
+		return `${spinner} ${badge}${color("text", label)} ${color("dim", "·")} ${color("muted", tailParts.join(" · "))}`;
 	}
-	if (task.glyph === "gate") {
-		const prompt = task.state === "planning" ? "needs you: plan?" : "needs you: ship?";
-		return [`${color("warning", "◆")} ${color("text", task.label)} ${color("dim", "—")} ${color("warning", prompt)}`];
-	}
-	if (task.glyph === "escalated") {
-		return [`${color("error", "⚠")} ${color("text", task.label)} ${color("dim", "—")} ${color("warning", "stuck")}`];
-	}
-	return [`${color("muted", "·")} ${color("text", task.label)} ${color("dim", "— idle")}`];
+	if (task.glyph === "gate") return `${color("warning", "◆")} ${color("warning", gatePrompt(task))} ${color("text", label)}`;
+	if (task.glyph === "escalated") return `${color("error", "⚠")} ${color("warning", "stuck")} ${color("text", label)}`;
+	return `${color("muted", "·")} ${color("muted", "idle")} ${color("text", label)}`;
+}
+
+function renderTaskChip(task: StatuslineTask, color: (token: string, text: string) => string, labelMax: number): string {
+	const label = footerLabel(task.label, labelMax, 3);
+	return `${color(GLYPH_COLOR[task.glyph], GLYPHS[task.glyph])} ${color(task.glyph === "idle" ? "muted" : "text", label)}`;
+}
+
+function renderDoneChip(doneCount: number, color: (token: string, text: string) => string): string {
+	return color("success", `✓${doneCount}`);
+}
+
+function orderedNonDoneTasks(model: StatuslineTask[]): StatuslineTask[] {
+	return model
+		.filter((task) => task.state !== "done")
+		.sort((a, b) => statusAttentionRank(a) - statusAttentionRank(b) || b.round - a.round || a.label.localeCompare(b.label));
 }
 
 /**
- * Render a multi-line, session-scoped Foreman panel for ctx.ui.setWidget(). Done tasks collapse into
- * the title count; non-done work is listed in attention order and capped for the editor widget.
+ * Render a single rich footer status line for ctx.ui.setStatus(). It is session-scoped by the caller's
+ * model, keeps the most important task readable, collapses done tasks to ✓N, and word-clips without
+ * a Unicode ellipsis so pi's footer remains useful after its own terminal-width truncation.
  */
-export function formatStatusPanel(model: StatuslineTask[], opts: FormatStatusPanelOptions = {}): string[] {
-	if (model.length === 0) return [];
+export function formatStatusLine(model: StatuslineTask[], opts: FormatStatusLineOptions = {}): string {
+	const active = orderedNonDoneTasks(model);
+	if (active.length === 0) return "";
 	const color = opts.color ?? ((_token, text) => text);
 	const frame = opts.frame ?? 0;
-	const maxTasks = opts.maxTasks ?? 4;
-	const maxLines = Math.max(1, opts.maxLines ?? 7);
-	const width = Math.max(24, opts.width ?? 80);
-	const activeCount = model.filter((task) => task.state !== "done").length;
-	const doneCount = model.length - activeCount;
-	const lines = [panelTitle(activeCount, doneCount, width, color)];
-	if (activeCount === 0 || maxLines === 1) return lines.slice(0, maxLines);
-	const ordered = model
-		.filter((task) => task.state !== "done")
-		.sort((a, b) => statusAttentionRank(a) - statusAttentionRank(b) || b.round - a.round || a.label.localeCompare(b.label));
-	let shown = 0;
-	for (const task of ordered.slice(0, maxTasks)) {
-		const block = renderPanelBlock(task, color, frame);
-		const hiddenIfShown = ordered.length - shown - 1;
-		const reserveMoreLine = hiddenIfShown > 0 ? 1 : 0;
-		let available = maxLines - lines.length - reserveMoreLine;
-		if (available <= 0) break;
-		const primary = block[0];
-		if (primary) {
-			lines.push(primary);
-			available -= 1;
+	const maxWidth = Math.max(1, Math.floor(opts.maxWidth ?? 160));
+	const doneCount = model.length - active.length;
+	const brand = color("accent", "FOREMAN");
+	const sep = color("dim", "   ");
+	const build = (leadLabelMax: number, chipLabelMax: number, chipCount: number, includeDone: boolean, runningTailLevel: number) => {
+		const segments = [renderLeadTask(active[0], color, frame, leadLabelMax, runningTailLevel)];
+		for (const task of active.slice(1, chipCount + 1)) segments.push(renderTaskChip(task, color, chipLabelMax));
+		if (includeDone && doneCount > 0) segments.push(renderDoneChip(doneCount, color));
+		return `${brand}  ${segments.join(sep)}`;
+	};
+
+	const leadBudgets = [64, 56, 48, 40, 32, 24, 18, 12, 8, 4];
+	const chipBudgets = [22, 18, 14, 10, 6];
+	for (const tailLevel of [2, 1, 0]) {
+		for (const leadBudget of leadBudgets) {
+			for (const chipBudget of chipBudgets) {
+				for (let chipCount = active.length - 1; chipCount >= 0; chipCount -= 1) {
+					const line = build(leadBudget, chipBudget, chipCount, true, tailLevel);
+					if (visibleLength(line) <= maxWidth) return line;
+				}
+			}
 		}
-		if (available > 0 && block[1]) lines.push(block[1]);
-		shown += 1;
 	}
-	const hidden = ordered.length - shown;
-	if (hidden > 0 && lines.length < maxLines) lines.push(color("muted", `+${hidden} more`));
-	return lines.slice(0, maxLines);
+	for (const tailLevel of [2, 1, 0]) {
+		for (const leadBudget of leadBudgets) {
+			const line = build(leadBudget, 0, 0, false, tailLevel);
+			if (visibleLength(line) <= maxWidth) return line;
+		}
+	}
+	const fallback = `${brand}  ${renderLeadTask(active[0], color, frame, Math.max(1, maxWidth - 24), 0)}`;
+	if (visibleLength(fallback) <= maxWidth) return fallback;
+	const brandOnly = color("accent", wordClip("FOREMAN", maxWidth));
+	return visibleLength(brandOnly) <= maxWidth ? brandOnly : "";
+}
+
+/** Back-compatible spelling used by older docs/tests. New code should call formatStatusLine. */
+export function formatStatusline(model: StatuslineTask[], opts: FormatStatuslineOptions = {}): string {
+	return formatStatusLine(model, opts);
 }
 
 /** Sort task picker rows by attention, ownership, then recency. Pure and stable for tests. */

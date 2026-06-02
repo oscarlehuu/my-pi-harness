@@ -66,6 +66,7 @@ import {
 import { decideReviewOutcome, parseReviewVerdict, type ReviewVerdict } from "./reviewer.ts";
 import { evaluateDoneness, extractDonenessInputs, renderDoneChecklist } from "./done.ts";
 import { buildCommitMessage, decideShipCommit, resolveStagePaths } from "./ship.ts";
+import { repoEngagementActive, setRepoEngagement } from "./engagement.ts";
 
 // Stronger model the frontend track falls back to when Gemini fails to drive the tools.
 const UI_FALLBACK_MODEL = "cliproxy/claude-opus-4-8:xhigh";
@@ -973,14 +974,17 @@ const LoopParams = {
 		slug: { type: "string", description: "Target a specific task by slug (needed only when a repo has multiple open tasks from different sessions)." },
 		approve: { type: "boolean", description: "Approve the current gate (plan at start, ship after success) and continue." },
 		reject: { type: "string", description: "Reject the current gate with feedback; the task is halted for revision." },
+		engage: { type: "boolean", description: "Persist Foreman engagement for this repo. true routes impactful main-session edits through Foreman; false allows direct edits until re-engaged." },
 	},
 	required: [],
 } as const;
 
 let dashboardOpen = false;
-let directMode = false;
 
 const DIRECT_STATUS_KEY = "foreman-direct";
+const DIRECT_STATUS_TEXT = "⚠ foreman-direct ON (repo)";
+const NON_GIT_ENGAGED_HINT =
+	"No git repo was detected for this cwd. Ask the founder to choose: Init git + Foreman (run `git init`, then start the normal Foreman task) or Disable Foreman for this repo with `foreman({ engage: false })`.";
 
 function findGitRoot(startPath: string): string | null {
 	let dir = path.resolve(startPath);
@@ -996,28 +1000,52 @@ function foremanScratchDirs(): string[] {
 	return [os.tmpdir(), process.env.TMPDIR, "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"].filter((dir): dir is string => Boolean(dir));
 }
 
+function foremanRepoRoot(cwd: string): string {
+	return findGitRoot(cwd) ?? path.resolve(cwd);
+}
+
+function setForemanDirectStatus(ctx: any, active: boolean): void {
+	const setStatus = ctx?.ui?.setStatus;
+	if (typeof setStatus !== "function") return;
+	setStatus.call(ctx.ui, DIRECT_STATUS_KEY, active ? undefined : DIRECT_STATUS_TEXT);
+}
+
+function engagementResultText(root: string, active: boolean): string {
+	return active
+		? `Foreman engagement ON for ${path.resolve(root)}. Impactful main-session edits route through Foreman.`
+		: `Foreman direct-edit mode ON for ${path.resolve(root)}. Impactful main-session edits are allowed until /foreman-direct or foreman({ engage: true }) re-engages this repo.`;
+}
+
 export default function (pi: ExtensionAPI) {
+	pi.on("session_start", (_event, ctx) => {
+		const root = foremanRepoRoot(ctx.cwd);
+		setForemanDirectStatus(ctx, repoEngagementActive(root));
+	});
+
 	pi.on("tool_call", (event, ctx) => {
-		if (process.env.FOREMAN_CREW === "1" || directMode) return undefined;
+		if (process.env.FOREMAN_CREW === "1") return undefined;
+		const cwdGitRoot = findGitRoot(ctx.cwd);
+		const root = cwdGitRoot ?? path.resolve(ctx.cwd);
+		const engagementActive = repoEngagementActive(root);
+		setForemanDirectStatus(ctx, engagementActive);
+		if (!engagementActive) return undefined;
 		const classification = classifyToolCall(
 			{ toolName: event.toolName, input: event.input },
-			{ cwd: ctx.cwd, findRepoRoot: findGitRoot, scratchDirs: foremanScratchDirs() },
+			{ cwd: ctx.cwd, findRepoRoot: (p: string) => findGitRoot(p) ?? ctx.cwd, scratchDirs: foremanScratchDirs() },
 		);
 		if (!classification.gate) return undefined;
-		return { block: true, reason: classification.reason };
+		const reason = cwdGitRoot || !classification.reason ? classification.reason : `${classification.reason}\n\n${NON_GIT_ENGAGED_HINT}`;
+		return { block: true, reason };
 	});
 
 	pi.registerCommand("foreman-direct", {
-		description: "Toggle Foreman direct-edit escape hatch for this session.",
+		description: "Toggle persisted Foreman direct-edit escape hatch for this repo.",
 		handler: async (_args, ctx) => {
-			directMode = !directMode;
-			if (directMode) {
-				ctx.ui?.setStatus?.(DIRECT_STATUS_KEY, "⚠ foreman direct-edit mode ON");
-				ctx.ui?.notify?.("Foreman direct-edit mode ON: main-session edits are allowed for this session.", "warning");
-			} else {
-				ctx.ui?.setStatus?.(DIRECT_STATUS_KEY, undefined);
-				ctx.ui?.notify?.("Foreman direct-edit mode OFF: implementation routes through Foreman.", "info");
-			}
+			const root = foremanRepoRoot(ctx.cwd);
+			const active = !repoEngagementActive(root);
+			const engagement = setRepoEngagement(root, active);
+			setForemanDirectStatus(ctx, engagement.active);
+			ctx.ui?.notify?.(engagementResultText(root, engagement.active), active ? "info" : "warning");
 		},
 	});
 
@@ -1063,11 +1091,18 @@ export default function (pi: ExtensionAPI) {
 			"or revise with { resume: true, reject: '<feedback>' }; resume targets THIS session's own task, so",
 			"only pass { slug } when a repo has multiple open tasks from different sessions. Drives the",
 			"developer + tester crew agents (the CTO can also use scout via the subagent tool for recon).",
+			"Persist route-through-Foreman engagement for the current repo with { engage: true|false }.",
 		].join(" "),
 		parameters: LoopParams as any,
 
 		async execute(_id: string, params: any, signal: AbortSignal, onUpdate: any, ctx: any) {
 			const cwd: string = params.cwd ?? ctx.cwd;
+			if (typeof params.engage === "boolean") {
+				const root = foremanRepoRoot(cwd);
+				const engagement = setRepoEngagement(root, params.engage);
+				setForemanDirectStatus(ctx, engagement.active);
+				return { content: [{ type: "text", text: engagementResultText(root, engagement.active) }] };
+			}
 			const maxRounds: number = params.maxRounds ?? 3;
 			const sessionId: string | undefined = ctx.sessionManager?.getSessionId?.();
 

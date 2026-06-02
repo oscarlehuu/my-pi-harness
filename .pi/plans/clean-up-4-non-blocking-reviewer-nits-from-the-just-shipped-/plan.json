@@ -1,0 +1,42 @@
+{
+  "summary": "Apply 4 non-blocking cosmetic/quality nits to the shipped Foreman engagement feature (commit ac8068): add a top-of-file doc comment to engagement.ts matching sibling pure modules; add JSDoc to setRepoEngagement explaining it returns the freshly-read RepoEngagement (keep the return type); make guard_test.sh tmp/env cleanup explicit and tmpdir-based; and collapse the duplicate engagement store read in index.ts's tool_call handler to a single read reused for status + gating. No runtime behavior, engagement semantics, guard contract, persisted format, or test pass/fail meaning changes. Full suite stays green.",
+  "steps": [
+    "NIT 1: In extensions/foreman/engagement.ts, add a concise block doc comment above the imports, matching the gates.ts/planner.ts/ledger.ts voice ('Pure / node-builtin-only', 'headlessly unit-testable'): pure per-repo persisted engagement store at <agentDir>/foreman/engagement.json, only OFF overrides stored, default ON, no pi imports.",
+    "NIT 2: Add a short JSDoc above setRepoEngagement (engagement.ts:96) documenting it persists the change and returns the freshly-read RepoEngagement for the repo; keep the RepoEngagement return type and body unchanged.",
+    "NIT 3: In extensions/foreman/test/guard_test.sh, replace fs.mkdtempSync(path.join(os.homedir(), '.foreman-engagement-test.')) with fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-engagement-')); add delete process.env.FOREMAN_ENGAGEMENT_STORE after the engagement assertions; add explicit fs.rmSync(engagementTmp, { recursive: true, force: true }) at the end. Keep all existing assertions and their meaning unchanged.",
+    "NIT 4: In extensions/foreman/index.ts tool_call handler (lines ~1024-1036), compute repoEngagementActive(root) once and reuse it for both the status-line update and the gating decision (single store read). Refactor setForemanDirectStatus(ctx, root) to setForemanDirectStatus(ctx, active) and update the other 3 call sites (session_start, /foreman-direct, engage param) to pass the active value they already computed. Keep crew bypass first, status text, cwd-fallback findRepoRoot, and NON_GIT hint identical.",
+    "Run the resolved verify gate (full suite incl. guard_test.sh) and confirm green; visually confirm no behavior/format/status-text change."
+  ],
+  "filesLikely": [
+    "extensions/foreman/engagement.ts",
+    "extensions/foreman/index.ts",
+    "extensions/foreman/test/guard_test.sh"
+  ],
+  "risks": [
+    "NIT 4 has the highest regression risk: setForemanDirectStatus is called from 4 sites (session_start:1021, tool_call:1028, /foreman-direct:1045, engage param:1101). If the signature changes to accept active:boolean, every call site must pass the correct post-write value or status text will desync — guard_test.sh asserts exact status text ('⚠ foreman-direct ON (repo)' vs undefined) across all paths. Mitigation: reuse setRepoEngagement's returned RepoEngagement (NIT 2) at the write sites; keep tool_call's single computed active.",
+    "NIT 2 must NOT change the return type to void — guard_test.sh deepEquals setRepoEngagement(...) return values and index.ts reads post-write state; only add JSDoc.",
+    "NIT 3: must keep FOREMAN_ENGAGEMENT_STORE set during the assertion blocks that need it; only unset AFTER engagement assertions, else later index.ts-driven assertions (indexStorePath) would break. Final rmSync must cover the tmpdir-based dir.",
+    "Constraint adherence: do not touch guard.ts, the append-only system-prompt mechanism, or the persisted file format; engagement.ts must stay pi-import-free.",
+    "Verify gate is heavy (greps planner.md + 8 shell suites + dashboard reader); a flaky/unrelated suite failure would block the round though changes are cosmetic."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ]
+}

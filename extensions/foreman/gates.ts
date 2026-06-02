@@ -24,6 +24,19 @@ export interface Gate {
 	paths?: string[];
 }
 
+export type RequirementCategory = "env" | "tools" | "services";
+
+export interface Requirement {
+	name: string;
+	reason?: string;
+}
+
+export interface TaskRequirements {
+	env: Requirement[];
+	tools: Requirement[];
+	services: Requirement[];
+}
+
 export interface CommandGateResult {
 	name: string;
 	command: string;
@@ -60,6 +73,30 @@ function normalizePaths(value: unknown): string[] | undefined {
 	if (!Array.isArray(value)) return undefined;
 	const paths = value.filter(isNonEmptyString).map((p) => p.trim()).filter(Boolean);
 	return paths.length ? paths : undefined;
+}
+
+function emptyRequirements(): TaskRequirements {
+	return { env: [], tools: [], services: [] };
+}
+
+export function normalizeRequirement(value: unknown): Requirement | null {
+	if (!isRecord(value) || !isNonEmptyString(value.name)) return null;
+	const name = value.name.trim();
+	const reason = isNonEmptyString(value.reason) ? value.reason.trim() : undefined;
+	return reason ? { name, reason } : { name };
+}
+
+export function normalizeRequirements(value: unknown): TaskRequirements {
+	if (!isRecord(value)) return emptyRequirements();
+	return {
+		env: Array.isArray(value.env) ? value.env.map(normalizeRequirement).filter((requirement): requirement is Requirement => requirement !== null) : [],
+		tools: Array.isArray(value.tools) ? value.tools.map(normalizeRequirement).filter((requirement): requirement is Requirement => requirement !== null) : [],
+		services: Array.isArray(value.services) ? value.services.map(normalizeRequirement).filter((requirement): requirement is Requirement => requirement !== null) : [],
+	};
+}
+
+export function requirementsEmpty(requirements: TaskRequirements): boolean {
+	return requirements.env.length === 0 && requirements.tools.length === 0 && requirements.services.length === 0;
 }
 
 function normalizeGate(value: unknown): Gate | null {
@@ -104,6 +141,18 @@ export function loadGates(cwd: string, fallbackVerifyCommand?: string): Gate[] {
 
 	if (!isRecord(parsed) || !Array.isArray(parsed.gates)) return [];
 	return parsed.gates.map(normalizeGate).filter((gate): gate is Gate => gate !== null);
+}
+
+export function loadRequirements(cwd: string): TaskRequirements {
+	const configPath = path.join(cwd, ".pi", "foreman.json");
+	if (!fs.existsSync(configPath)) return emptyRequirements();
+
+	try {
+		const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+		return isRecord(parsed) ? normalizeRequirements(parsed.requirements) : emptyRequirements();
+	} catch {
+		return emptyRequirements();
+	}
 }
 
 export function gatesForStage(gates: Gate[], stage: GateStage): Gate[] {

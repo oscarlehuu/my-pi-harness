@@ -44,19 +44,23 @@ import {
 	type Gate,
 	gatesForStage,
 	loadGates,
+	loadRequirements,
 	runCommandGates,
 } from "./gates.ts";
 import {
 	type PlannerPlan,
 	type PlannerSource,
+	type RequirementCheck,
 	PLAN_JSON_END,
 	PLAN_JSON_START,
 	decideManifestWrite,
 	decidePlannerTimeout,
+	evaluateRequirementPresence,
 	fallbackPlannerPlan,
 	renderFounderPlan,
 	resolvePlannerTimeouts,
 	serializePlannerPlan,
+	summarizeRequirementChecks,
 	validatePlannerPlan,
 } from "./planner.ts";
 import { decideReviewOutcome, parseReviewVerdict, type ReviewVerdict } from "./reviewer.ts";
@@ -472,6 +476,46 @@ function hasForemanManifest(cwd: string): boolean {
 	return fs.existsSync(foremanManifestPath(cwd));
 }
 
+function toolOnPath(name: string): boolean {
+	const executable = name.trim();
+	if (!executable || path.basename(executable) !== executable) return false;
+	const searchPath = process.env.PATH ?? "";
+	for (const dir of searchPath.split(path.delimiter)) {
+		if (!dir) continue;
+		const candidate = path.join(dir, executable);
+		try {
+			if (!fs.statSync(candidate).isFile()) continue;
+			fs.accessSync(candidate, fs.constants.X_OK);
+			return true;
+		} catch {
+			// Keep probing PATH entries; this helper must never shell out or throw.
+		}
+	}
+	return false;
+}
+
+function requirementCategoryLabel(category: RequirementCheck["category"]): string {
+	if (category === "env") return "env";
+	if (category === "tools") return "tool";
+	return "service";
+}
+
+function requirementGapNames(checks: RequirementCheck[]): string[] {
+	const summary = summarizeRequirementChecks(checks);
+	return [...summary.missing, ...summary.unknown].map((check) => `${check.category}:${check.name}`);
+}
+
+function formatRequirementGap(check: RequirementCheck): string {
+	if (check.presence === "missing") return `missing ${requirementCategoryLabel(check.category)} ${check.name}`;
+	if (check.category === "services") return `confirm service ${check.name} is running`;
+	return `confirm ${requirementCategoryLabel(check.category)} ${check.name}`;
+}
+
+function formatRequirementGaps(checks: RequirementCheck[]): string {
+	const summary = summarizeRequirementChecks(checks);
+	return [...summary.missing, ...summary.unknown].map(formatRequirementGap).join("; ");
+}
+
 function plannerPlanPath(cwd: string, slug: string): string {
 	return path.join(taskDir(cwd, slug), "plan.json");
 }
@@ -547,8 +591,8 @@ function plannerTaskFor(context: {
 		"Currently resolved gates:",
 		gateLines,
 		"",
-		"Return a concise plan and exactly one PLAN-JSON block with keys summary, steps, filesLikely, risks, proposedGates. Propose only commands you verified actually exist in this repo; if no .pi/foreman.json exists and no real command is detectable, proposedGates must be empty. Do not copy the legacy verify command into proposedGates unless you verified it is a real repo command. If .pi/foreman.json exists, reflect existing gates and do not propose overwriting it.",
-		"Keep recon tight (~6-10 tool calls). Your FINAL message MUST end with exactly one ---PLAN-JSON--- ... ---END-PLAN-JSON--- block containing summary, steps, filesLikely, risks, proposedGates — even if you must note assumptions in risks. Narration without the block is a failure.",
+		"Return a concise plan and exactly one PLAN-JSON block with keys summary, steps, filesLikely, risks, proposedGates, requirements. Propose only commands you verified actually exist in this repo; if no .pi/foreman.json exists and no real command is detectable, proposedGates must be empty. Detect required env var names, CLI tool names, and service/runtime names; report only names and short reasons, never secret values. Do not copy the legacy verify command into proposedGates unless you verified it is a real repo command. If .pi/foreman.json exists, reflect existing gates and do not propose overwriting it.",
+		"Keep recon tight (~6-10 tool calls). Your FINAL message MUST end with exactly one ---PLAN-JSON--- ... ---END-PLAN-JSON--- block containing summary, steps, filesLikely, risks, proposedGates, requirements — even if you must note assumptions in risks. Narration without the block is a failure.",
 	].join("\n");
 }
 
@@ -690,6 +734,7 @@ function writeProposedManifestOnGate1Approval(cwd: string, draft: PersistedPlann
 	const decision = decideManifestWrite({
 		manifestExists: hasForemanManifest(cwd),
 		proposedGates: draft.plan.proposedGates,
+		requirements: draft.plan.requirements,
 		source: draft.source,
 	});
 	if (!decision.shouldWrite || !decision.manifest) return { wrote: false, reason: decision.reason };
@@ -1069,6 +1114,18 @@ export default function (pi: ExtensionAPI) {
 						perRoundCommandGates[0].command === verifyCommand,
 				);
 			};
+			const runRequirementsPreflight = () => {
+				const checks = evaluateRequirementPresence({ requirements: loadRequirements(cwd), env: process.env, toolPresent: toolOnPath });
+				const summary = summarizeRequirementChecks(checks);
+				const requirementGaps = requirementGapNames(checks);
+				appendLog(cwd, slug, {
+					type: "preflight_checked",
+					round: state.round,
+					requirementGaps,
+					requirements: checks.map((check) => ({ category: check.category, name: check.name, presence: check.presence })),
+				});
+				if (summary.hasGaps) emit(`ADVISORY: Preflight: ${formatRequirementGaps(checks)}.`);
+			};
 			refreshGates();
 
 			const evaluateCurrentDoneness = (gate2Approved: boolean) =>
@@ -1168,6 +1225,7 @@ export default function (pi: ExtensionAPI) {
 								signal,
 							});
 					writePersistedPlannerDraft(cwd, slug, drafted);
+					const requirementChecks = evaluateRequirementPresence({ requirements: drafted.plan.requirements, env: process.env, toolPresent: toolOnPath });
 					const plan = renderFounderPlan(drafted.plan, {
 						task: state.task,
 						cwd,
@@ -1181,6 +1239,7 @@ export default function (pi: ExtensionAPI) {
 						existingGates: gates,
 						plannerSource: drafted.source,
 						manifestWriteEligible: drafted.source === "planner",
+						requirementChecks,
 					});
 					fs.writeFileSync(path.join(taskDir(cwd, slug), "plan.md"), `${plan}\n`);
 					state.state = "planning";
@@ -1190,6 +1249,7 @@ export default function (pi: ExtensionAPI) {
 						planner: drafted.source,
 						note: drafted.note,
 						perRoundGates: perRoundGateSummary,
+						requirementGaps: requirementGapNames(requirementChecks),
 					});
 					emit(
 						`\n=== GATE 1 / PLAN — approval needed ===\n${plan}\n` +
@@ -1200,6 +1260,8 @@ export default function (pi: ExtensionAPI) {
 					return done();
 				}
 			}
+
+			if (state.gate1Approved) runRequirementsPreflight();
 
 			let devContext = `Implement this task in ${cwd}:\n${state.task}`;
 			if (isLegacyVerifyGate) {

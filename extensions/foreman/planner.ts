@@ -7,7 +7,15 @@
  * headlessly unit-testable.
  */
 
-import type { Gate, GateKind, GateStage } from "./gates.ts";
+import {
+	normalizeRequirements,
+	requirementsEmpty,
+	type Gate,
+	type GateKind,
+	type GateStage,
+	type RequirementCategory,
+	type TaskRequirements,
+} from "./gates.ts";
 
 export const PLAN_JSON_START = "---PLAN-JSON---";
 export const PLAN_JSON_END = "---END-PLAN-JSON---";
@@ -16,6 +24,7 @@ export type PlannerSource = "planner" | "fallback" | "persisted";
 
 export interface ForemanManifest {
 	gates: Gate[];
+	requirements?: TaskRequirements;
 }
 
 export interface PlannerPlan {
@@ -24,6 +33,7 @@ export interface PlannerPlan {
 	filesLikely: string[];
 	risks: string[];
 	proposedGates: Gate[];
+	requirements: TaskRequirements;
 }
 
 export interface PlannerContext {
@@ -40,6 +50,16 @@ export interface PlannerContext {
 	plannerSource?: PlannerSource;
 	/** True only for a valid parsed planner PLAN-JSON; fallback/template plans must pass false. */
 	manifestWriteEligible?: boolean;
+	requirementChecks?: RequirementCheck[];
+}
+
+export type Presence = "present" | "missing" | "unknown";
+
+export interface RequirementCheck {
+	category: RequirementCategory;
+	name: string;
+	reason?: string;
+	presence: Presence;
 }
 
 export type PlannerTimeoutReason = "idle" | "max";
@@ -64,6 +84,7 @@ export interface ManifestDecision {
 
 const VALID_KINDS = new Set<GateKind>(["command", "judge", "action"]);
 const VALID_STAGES = new Set<GateStage>(["per-round", "pre-ship", "release"]);
+const REQUIREMENT_CATEGORIES: RequirementCategory[] = ["env", "tools", "services"];
 const DEFAULT_PLANNER_IDLE_MS = 90_000;
 const DEFAULT_PLANNER_MAX_MS = 300_000;
 const MIN_PLANNER_IDLE_MS = 1_000;
@@ -161,6 +182,7 @@ export function validatePlannerPlan(value: unknown): PlannerPlan | null {
 		filesLikely: cleanStringList(value.filesLikely),
 		risks: cleanStringList(value.risks),
 		proposedGates: normalizePlannerGates(value.proposedGates),
+		requirements: normalizeRequirements(value.requirements),
 	};
 }
 
@@ -201,12 +223,14 @@ export function fallbackPlannerPlan(context: PlannerContext): PlannerPlan {
 			"Repo-specific edge cases may still be discovered by the developer/tester loop.",
 		],
 		proposedGates: gates,
+		requirements: normalizeRequirements(undefined),
 	};
 }
 
 export function decideManifestWrite(input: {
 	manifestExists: boolean;
 	proposedGates?: unknown;
+	requirements?: unknown;
 	source?: PlannerSource;
 	allowWrite?: boolean;
 }): ManifestDecision {
@@ -218,14 +242,49 @@ export function decideManifestWrite(input: {
 		return { shouldWrite: false, reason: "Planner fallback/invalid output is not eligible to create .pi/foreman.json." };
 	}
 	const gates = normalizePlannerGates(input.proposedGates);
-	if (gates.length === 0) {
-		return { shouldWrite: false, reason: "No valid proposed gates are available to write to .pi/foreman.json." };
+	const requirements = normalizeRequirements(input.requirements);
+	const hasRequirements = !requirementsEmpty(requirements);
+	if (gates.length === 0 && !hasRequirements) {
+		return { shouldWrite: false, reason: "No valid proposed gates or requirements are available to write to .pi/foreman.json." };
 	}
 	return {
 		shouldWrite: true,
-		manifest: { gates },
-		reason: "Will write proposed .pi/foreman.json only after Gate 1 approval.",
+		manifest: { gates, ...(hasRequirements ? { requirements } : {}) },
+		reason: "Will write proposed .pi/foreman.json gates/requirements only after Gate 1 approval.",
 	};
+}
+
+export function evaluateRequirementPresence(input: {
+	requirements: TaskRequirements;
+	env: Record<string, string | undefined>;
+	toolPresent: (name: string) => boolean;
+}): RequirementCheck[] {
+	const requirements = normalizeRequirements(input.requirements);
+	return REQUIREMENT_CATEGORIES.flatMap((category) =>
+		requirements[category].map((requirement) => {
+			let presence: Presence;
+			if (category === "env") {
+				presence = isNonEmptyString(input.env[requirement.name]) ? "present" : "missing";
+			} else if (category === "tools") {
+				presence = input.toolPresent(requirement.name) ? "present" : "missing";
+			} else {
+				presence = "unknown";
+			}
+			return { category, name: requirement.name, reason: requirement.reason, presence };
+		}),
+	);
+}
+
+export function summarizeRequirementChecks(checks: RequirementCheck[]): {
+	present: RequirementCheck[];
+	missing: RequirementCheck[];
+	unknown: RequirementCheck[];
+	hasGaps: boolean;
+} {
+	const present = checks.filter((check) => check.presence === "present");
+	const missing = checks.filter((check) => check.presence === "missing");
+	const unknown = checks.filter((check) => check.presence === "unknown");
+	return { present, missing, unknown, hasGaps: missing.length > 0 || unknown.length > 0 };
 }
 
 function gatePayload(gate: Gate): string {
@@ -238,14 +297,57 @@ function formatGate(gate: Gate): string {
 	return `- ${gate.name} (${gate.stage} ${gate.kind})${gatePayload(gate)}`;
 }
 
+function categoryHeading(category: RequirementCategory): string {
+	if (category === "env") return "Env vars/secrets";
+	if (category === "tools") return "CLI tools/binaries";
+	return "Services/runtimes";
+}
+
+function presenceMarker(presence: Presence): string {
+	if (presence === "present") return "✓";
+	if (presence === "missing") return "✗";
+	return "?";
+}
+
+function unknownRequirementChecks(requirements: TaskRequirements): RequirementCheck[] {
+	const normalized = normalizeRequirements(requirements);
+	return REQUIREMENT_CATEGORIES.flatMap((category) =>
+		normalized[category].map((requirement) => ({
+			category,
+			name: requirement.name,
+			reason: requirement.reason,
+			presence: "unknown" as const,
+		})),
+	);
+}
+
+function renderRequirementChecks(checks: RequirementCheck[]): string[] {
+	if (!checks.length) return ["- (none detected)"];
+	const lines: string[] = [];
+	for (const category of REQUIREMENT_CATEGORIES) {
+		const categoryChecks = checks.filter((check) => check.category === category);
+		if (!categoryChecks.length) continue;
+		lines.push(`### ${categoryHeading(category)}`);
+		lines.push(
+			...categoryChecks.map((check) =>
+				`- ${presenceMarker(check.presence)} ${check.name}${check.reason ? ` — ${check.reason}` : ""}`,
+			),
+		);
+	}
+	return lines;
+}
+
 export function renderFounderPlan(plan: PlannerPlan, context: PlannerContext): string {
 	const decision = decideManifestWrite({
 		manifestExists: context.manifestExists === true,
 		proposedGates: plan.proposedGates,
+		requirements: plan.requirements,
 		allowWrite: context.manifestWriteEligible ?? (context.plannerSource === "planner"),
 	});
 	const filesLikely = plan.filesLikely.length ? plan.filesLikely.map((file) => `- \`${file}\``) : ["- (not identified by planner)"];
 	const risks = plan.risks.length ? plan.risks : ["None identified yet."];
+	const requirementChecks = context.requirementChecks ?? unknownRequirementChecks(plan.requirements);
+	const requirements = renderRequirementChecks(requirementChecks);
 	const gates = plan.proposedGates.length ? plan.proposedGates.map(formatGate) : ["- (none proposed)"];
 	const plannerSource = context.plannerSource ? ` (${context.plannerSource})` : "";
 	return [
@@ -262,6 +364,9 @@ export function renderFounderPlan(plan: PlannerPlan, context: PlannerContext): s
 		"",
 		"## Risks",
 		...risks.map((risk) => `- ${risk}`),
+		"",
+		"## Requirements",
+		...requirements,
 		"",
 		"## Proposed gates",
 		...gates,

@@ -1,0 +1,54 @@
+{
+  "summary": "Add an advisory, proactive task-requirements capability (env vars, CLI tools, services) to the Foreman Gate 1 planner, mirroring the existing proposedGates/manifest patterns, persisting only requirement NAMES+reasons and never blocking approval.",
+  "steps": [
+    "gates.ts: add RequirementCategory/Requirement/TaskRequirements types plus normalizeRequirement, normalizeRequirements (tolerant; missing or non-array categories become []), requirementsEmpty, and loadRequirements(cwd) reading the .pi/foreman.json `requirements` key (empty TaskRequirements when absent/malformed); do not change loadGates.",
+    "planner.ts: import the requirement types; add requirements to PlannerPlan and parse it in validatePlannerPlan as OPTIONAL/additive defaulting to empty (existing summary/steps/filesLikely/risks/proposedGates validation unchanged); set fallbackPlannerPlan requirements to empty; include requirements in serializePlannerPlan; add requirements? to ForemanManifest.",
+    "planner.ts: broaden decideManifestWrite to accept optional requirements and write when proposedGates non-empty OR requirements non-empty, emitting { gates, ...(requirements non-empty ? { requirements } : {}) }; keep the existing-manifest and fallback/invalid guards, keep the both-empty no-write reason matching /No valid proposed gates/, and update reason strings.",
+    "planner.ts: add pure Presence/RequirementCheck types, evaluateRequirementPresence (env present iff non-empty string, tools via injected toolPresent, services ALWAYS unknown, no shell), summarizeRequirementChecks (hasGaps = any missing/unknown), and a ## Requirements section in renderFounderPlan grouped by category with present(checkmark)/missing/unknown markers, driven by an optional requirementChecks on PlannerContext (fallback to plan names as unknown when absent), '(none detected)' when empty.",
+    "index.ts: add a side-effect-free toolOnPath(name) scanning process.env.PATH; in the Gate 1 AWAITING branch evaluate presence via evaluateRequirementPresence({ requirements: drafted.plan.requirements, env: process.env, toolPresent: toolOnPath }), pass checks into renderFounderPlan, and add requirementGaps to the gate1_awaiting log; never run service checks.",
+    "index.ts: add a per-run advisory preflight after refreshGates and after Gate 1 approval/resume that loads persisted requirements via loadRequirements(cwd), evaluates env+tool presence only, emits a single non-blocking advisory line for missing/unknown items, and appends a preflight_checked log without blocking the rounds; confirm writeProposedManifestOnGate1Approval passes requirements so the persisted manifest round-trips with loadRequirements.",
+    "crew/planner.md: extend recon to detect env vars/secrets (grep process.env/os.environ/getenv/config keys/.env.example), external CLI tools, and services/runtimes; add SAFETY (names+short reason only, never read/echo/store secret VALUES, never open real .env files); document a requirements key in the PLAN-JSON contract with shape { env:[{name,reason}], tools:[...], services:[...] } that may be empty.",
+    "AGENTS.md and docs/CHARTER.md: at the Gate 1 relay step, instruct the CTO to PROACTIVELY ask the founder to provide/confirm any MISSING or UNKNOWN requirements as part of (or just before) the Gate 1 AskUserQuestion, keeping it advisory (founder can still approve) and stating secret VALUES are provided out-of-band, never pasted into the plan or stored in the manifest.",
+    "Tests: extend extensions/foreman/test/planner_test.sh (normalizeRequirements tolerance, requirementsEmpty, validatePlannerPlan with and without requirements, serialize round-trip, decideManifestWrite requirements cases, evaluateRequirementPresence with injected env/toolPresent and no command execution, summarizeRequirementChecks.hasGaps, renderFounderPlan ## Requirements with markers) and add loadRequirements coverage to gates_test.sh; if a new requirements_test.sh is added instead, also wire it into the verify gate command.",
+    "Run the full Foreman test suite via the resolved verify gate and confirm all suites pass."
+  ],
+  "filesLikely": [
+    "extensions/foreman/gates.ts",
+    "extensions/foreman/planner.ts",
+    "extensions/foreman/index.ts",
+    "extensions/foreman/crew/planner.md",
+    "extensions/foreman/AGENTS.md",
+    "extensions/foreman/docs/CHARTER.md",
+    "extensions/foreman/test/planner_test.sh",
+    "extensions/foreman/test/gates_test.sh",
+    ".pi/foreman.json"
+  ],
+  "risks": [
+    "The resolved verify gate hardcodes the test-file list AND greps crew/planner.md for 'claude-opus-4-8:xhigh'; a new requirements_test.sh will NOT run unless appended to that command, and any planner.md edit must preserve the model line. Safest to extend the already-wired planner_test.sh/gates_test.sh, or also update the verify command string in .pi/foreman.json.",
+    "validatePlannerPlan must treat requirements as optional/additive — plans without it must still validate to empty — or existing planner_test.sh assertions break.",
+    "decideManifestWrite must keep emitting exactly { gates } when requirements is empty (existing test deep-equals that) and keep the both-empty no-write reason matching /No valid proposed gates/, while broadening to write on requirements-only.",
+    "Security: services must never be probed via shell, secret VALUES must never be read/stored (names only), and .env.example may be read for names but real .env values must not.",
+    "Backward compatibility: existing .pi/foreman.json without a requirements key and existing persisted plans without requirements must keep working (tolerant loaders/defaults).",
+    "gates.ts and planner.ts must remain pure/node-builtin with no pi imports, and the append-only system-prompt mechanism must not be touched (quota safety)."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ]
+}

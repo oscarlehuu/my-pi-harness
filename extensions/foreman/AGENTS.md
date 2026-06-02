@@ -75,8 +75,13 @@ brainstorm → plan → [GATE 1] → implement → per-round command gates → t
 3. **Run the `foreman` tool** with the task (and a `verifyCommand` when known). It is a deterministic
    machine that owns the rest:
    - **planner** drafts the Gate 1 plan read-only. If valid, its proposed `.pi/foreman.json` gates
-     can be written only after Gate 1 approval and never over an existing manifest.
+     and advisory task requirement names can be written only after Gate 1 approval and never over an
+     existing manifest. Secret values are never read or stored.
    - **GATE 1 (plan)** — it pauses and shows the plan. Relay it via an `AskUserQuestion` Approve/Revise prompt.
+     If the plan reports any MISSING or UNKNOWN requirements (env vars, tools, services), proactively
+     ask the founder to provide/confirm them as part of the relay (or just before it), instead of
+     waiting for them to raise it. This is advisory: approval may continue without them, and secret
+     values must be provided out-of-band (exported env / `.env`), never pasted into the plan or manifest.
    - **dev → command gates → tester** rounds. The controller runs per-round command gates itself
      (exit code is ground truth); the tester judges whether intent is satisfied and watches for
      cheats. On FAIL the verdict is fed back to the developer and retried, up to the round cap (~3),

@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-02T09:11:15.762Z",
+  "role": "tester",
+  "round": 2,
+  "sessionId": "f876154a-3a7c-4bcb-9ce8-cf8cc63425a6",
+  "successState": "success",
+  "summary": "I'll investigate the actual implementation to verify it satisfies the task.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll investigate the actual implementation to verify it satisfies the task.\nengagement.ts looks correct and pure. Now let me check index.ts wiring.\nNow let me check for any remaining directMode references and verify the docs/tests.\nAGENTS.md is well documented. Now the CHARTER.md.\nBoth docs done. Now check the tests in guard_test.sh.\nLet me verify how the test loads index.ts to confirm it's real wiring, not a stub.\nThe tests genuinely import and exercise index.ts (not stubbed). Let me verify the test cleanup and run the suite to confirm it actually passes.\nThe env var is set inside the node subprocess so it doesn't leak to other suites. Let me run the full verify suite to confirm.\nEverything checks out. Let me verify engagement.ts has no pi import and confirm the implementation completeness.\nAll verified. The implementation fully satisfies the task:\n\n**A. engagement.ts** — pure node/fs (no pi import), correct `engagementStorePath()` with test seam + `PI_CODING_AGENT_DIR` fallback, sanitized-tail+sha256 `repoEngagementKey`, tolerant reader (bad JSON/shape → default ON, never throws), correct `readRepoEngagement`/`repoEngagementActive`/`setRepoEngagement` (OFF stored, ON deletes key), atomic write with mkdir -p.\n\n**B. index.ts** — imports engagement; `tool_call` keeps crew bypass, computes `root = findGitRoot ?? cwd`, returns undefined when OFF, classifies with cwd-fallback `findRepoRoot`, appends non-git hint mentioning `git init` + `engage: false`; `/foreman-direct` persists per-repo with correct status/notify; `engage` param added to LoopParams and handled early before task start; passive `session_start` only sets status; `directMode` fully removed (no matches).\n\n**C. AGENTS.md + CHARTER.md** — both document ON-by-default everywhere, binary AskUserQuestion (Init git + Foreman / Disable Foreman), out-of-tree persistence, passive session_start, quiet quick-questions.\n\n**D. guard_test.sh** — genuinely imports engagement.ts and the real index.ts (copied + module-linked, not stubbed); covers default/OFF/back-to-ON, per-repo independence, corrupt store tolerance, no-store-on-read, CWD-fallback gating contract, and verifies no project-local writes + session_start doesn't write. Env seam set inside the node subprocess so it doesn't leak.\n\nThe constraints (guard.ts untouched, no project-local writes, no mutations on read-only session, directMode removed cleanly) all hold, and the suite passes.\n\nVERDICT: PASS"
+}

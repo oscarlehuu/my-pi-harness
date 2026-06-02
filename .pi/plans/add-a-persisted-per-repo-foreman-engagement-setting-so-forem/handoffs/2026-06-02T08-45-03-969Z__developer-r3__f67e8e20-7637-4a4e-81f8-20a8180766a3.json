@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-06-02T08:45:03.969Z",
+  "role": "developer",
+  "round": 3,
+  "sessionId": "f67e8e20-7637-4a4e-81f8-20a8180766a3",
+  "summary": "(no structured summary)",
+  "raw": "Gate 1 plan is ready, but the interactive approval UI is unavailable.\n\nPlanner reports the feature already appears implemented and green, so the next step is a conformance/verification pass plus the full verify gate.\n\nReply with one of:\n\n- `Approve` — proceed through Foreman\n- `Revise: <feedback>` — change the plan before implementation/verification"
+}

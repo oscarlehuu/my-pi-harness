@@ -27,6 +27,7 @@ import {
 	createHeadlessFallback,
 	createInitialFocusState,
 	createInitialNavigationState,
+	cycleFocusMode,
 	decideOptionListEnterAction,
 	getChoiceNote,
 	getCustomOptionIndex,
@@ -36,7 +37,6 @@ import {
 	moveQuestion,
 	returnFocusToOptions,
 	setChoiceNote,
-	setCurrentQuestionIndex,
 	setCustomText,
 	setQuestionState,
 	shouldRenderChoiceNote,
@@ -143,6 +143,9 @@ class AskUserQuestionDialog extends Container implements Focusable {
 		this.theme = theme;
 		this.done = done;
 		this.noteInput.onEscape = () => this.saveActiveNoteAndReturnToOptions();
+		this.noteInput.onSubmit = () => {
+			this.cycleFocusedArea();
+		};
 		this.updateInputFocus();
 	}
 
@@ -169,8 +172,20 @@ class AskUserQuestionDialog extends Container implements Focusable {
 			}
 
 			if (matchesKey(data, Key.tab)) {
-				this.goToNextQuestion();
+				this.cycleFocusedArea();
 				return;
+			}
+
+			if (matchesKey(data, Key.enter)) {
+				this.cycleFocusedArea();
+				return;
+			}
+
+			// Translate left/right arrows to Alt+b/Alt+f so noteInput moves word-by-word
+			if (matchesKey(data, Key.left)) {
+				data = "\x1bb";
+			} else if (matchesKey(data, Key.right)) {
+				data = "\x1bf";
 			}
 
 			this.noteInput.handleInput(data);
@@ -184,6 +199,11 @@ class AskUserQuestionDialog extends Container implements Focusable {
 		const question = this.currentQuestion();
 		const state = this.currentState();
 		const customFocused = isCustomOption(question, state.focusedIndex);
+
+		if (matchesKey(data, Key.escape)) {
+			this.done(null);
+			return;
+		}
 
 		if (matchesKey(data, Key.up)) {
 			this.updateCurrentState(moveFocus(question, state, -1));
@@ -201,13 +221,18 @@ class AskUserQuestionDialog extends Container implements Focusable {
 			return;
 		}
 
-		if (matchesKey(data, Key.tab)) {
-			this.goToNextQuestion();
+		if (matchesKey(data, Key.left)) {
+			this.switchQuestionTab(-1);
 			return;
 		}
 
-		if (matchesKey(data, "e") && !customFocused) {
-			this.openFocusedChoiceNote();
+		if (matchesKey(data, Key.right)) {
+			this.switchQuestionTab(1);
+			return;
+		}
+
+		if (matchesKey(data, Key.tab)) {
+			this.cycleFocusedArea();
 			return;
 		}
 
@@ -342,28 +367,13 @@ class AskUserQuestionDialog extends Container implements Focusable {
 		this.navigation = setQuestionState(this.questions, this.navigation, this.navigation.currentQuestionIndex, state);
 	}
 
-	private goToNextQuestion(): void {
+	private cycleFocusedArea(): void {
 		this.saveActiveNoteFromInput();
-		if (this.questions.length > 1) {
-			const nextIndex = (this.navigation.currentQuestionIndex + 1) % this.questions.length;
-			this.navigation = setCurrentQuestionIndex(this.questions, this.navigation, nextIndex);
-		}
-		this.focusState = returnFocusToOptions();
+		this.focusState = cycleFocusMode(this.currentQuestion(), this.currentState(), this.focusState);
+		this.prepareNoteInputForFocus();
 		this.prepareCustomInputForFocus();
 		this.statusMessage = "";
 		this.refresh();
-	}
-
-	private openFocusedChoiceNote(): void {
-		const focusedIndex = this.currentState().focusedIndex;
-		const optionsLength = this.currentQuestion().options.length;
-		if (focusedIndex >= 0 && focusedIndex < optionsLength) {
-			this.saveActiveNoteFromInput();
-			this.focusState = { mode: "choice-note", activeChoiceNoteIndex: focusedIndex };
-			this.prepareNoteInputForFocus();
-			this.statusMessage = "";
-			this.refresh();
-		}
 	}
 
 	private prepareNoteInputForFocus(): void {
@@ -438,7 +448,7 @@ class AskUserQuestionDialog extends Container implements Focusable {
 	private helpText(): string {
 		return this.theme.fg(
 			"dim",
-			"Tab next question • ↑/↓ move • Space select/toggle • e add note • Enter next (submit on last) • Esc exit note • type on Custom answer",
+			"←/→ tabs (word-move in note) • ↑/↓ options • Space select/toggle • Tab note⇄options • Enter next (submit on last) • Esc close (exit note) • type on Custom answer",
 		);
 	}
 

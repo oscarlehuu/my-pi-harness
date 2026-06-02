@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-02T11:40:54.163Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "cb7c9862-e219-4fde-844e-b9b6d4a96c5c",
+  "successState": "success",
+  "summary": "All drafted edits are correctly applied:",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "All drafted edits are correctly applied:\n\n- Imports: `cycleFocusMode` removed, `setCurrentQuestionIndex` added (index.ts:36).\n- Constructor: only `onEscape` set; no `onSubmit` (index.ts:139).\n- Note-mode branch: Esc → save, Tab → `goToNextQuestion`, else passes to `noteInput`; no Enter/Tab cycle (index.ts:159-180).\n- Options-mode: no ←/→ or Tab-cycle; Tab → `goToNextQuestion`, `e` (not customFocused) → `openFocusedChoiceNote`; Space/Enter/custom intact (index.ts:200-227).\n- `goToNextQuestion()` wraps via `setCurrentQuestionIndex`; `openFocusedChoiceNote()` no-ops on non-option (index.ts:333-356).\n- `switchQuestionTab` retained only for `handleOptionListEnter` advance path; submit-on-last + completeness check preserved (index.ts:399-446).\n- `helpText()` matches the required string exactly (index.ts:466).\n\nLogic.ts exports untouched (`setCurrentQuestionIndex` and `cycleFocusMode` both still exist there). Change fulfills the task intent; no cheats.\n\nVERDICT: PASS"
+}

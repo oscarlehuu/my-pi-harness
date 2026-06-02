@@ -1,0 +1,52 @@
+{
+  "summary": "Rework AskUserQuestion dialog keybindings in extensions/AskUserQuestion/index.ts (UI wiring only): Tab now advances to the next question and wraps (works in options mode and while editing a note, saving first); 'e' opens the per-choice note for a focused real option (not on the Custom answer row, where 'e' types normally); Esc is the only way to leave the note editor; ←/→ question-tab switching is removed so arrows are free for cursor movement in the note; ↑/↓, Space, and Enter behavior preserved. logic.ts is NOT modified (its exports remain covered by logic_test.sh).",
+  "steps": [
+    "Imports from './logic.ts': remove cycleFocusMode; add setCurrentQuestionIndex. Leave moveQuestion/returnFocusToOptions imports (still used by switchQuestionTab and submitIfComplete).",
+    "Constructor: delete the this.noteInput.onSubmit assignment; keep noteInput.onEscape -> saveActiveNoteAndReturnToOptions.",
+    "handleInput note-mode branch (focusState.mode !== 'options'): handle Esc -> saveActiveNoteAndReturnToOptions; Tab -> goToNextQuestion; otherwise delegate to noteInput. Remove the Enter->cycleFocusedArea and Tab->cycleFocusedArea handling.",
+    "handleInput options-mode branch: remove Key.left->switchQuestionTab(-1), Key.right->switchQuestionTab(1), and Key.tab->cycleFocusedArea blocks. Add Tab->goToNextQuestion and matchesKey(data,'e') (when NOT customFocused) -> openFocusedChoiceNote. Keep ↑/↓, Space toggle, Enter->handleOptionListEnter, and custom inline typing unchanged.",
+    "Replace cycleFocusedArea() with goToNextQuestion(): saveActiveNoteFromInput(); if questions.length > 1 set currentQuestionIndex to (current+1)%length via setCurrentQuestionIndex; focusState = returnFocusToOptions(); prepareCustomInputForFocus(); clear statusMessage; refresh().",
+    "Add openFocusedChoiceNote(): if focusedIndex is a real option (>=0 and < options.length): saveActiveNoteFromInput(); focusState = { mode:'choice-note', activeChoiceNoteIndex: focusedIndex }; prepareNoteInputForFocus(); clear statusMessage; refresh(); else no-op.",
+    "Keep switchQuestionTab as the Enter advance/submit path in handleOptionListEnter; do not alter submitIfComplete or the 'Answer each question before submitting' completeness check.",
+    "Update helpText() to: 'Tab next question • ↑/↓ move • Space select/toggle • e add note • Enter next (submit on last) • Esc exit note • type on Custom answer'.",
+    "Verify: run bash extensions/AskUserQuestion/test/logic_test.sh (must still pass; logic.ts unchanged) and the tsc check on index.ts (no blocking TS errors)."
+  ],
+  "filesLikely": [
+    "extensions/AskUserQuestion/index.ts"
+  ],
+  "risks": [
+    "Automated coverage gap: logic_test.sh asserts logic.ts only (incl. cycleFocusMode/moveQuestion) and does not drive index.ts keyboard input, so the new Tab-cycle, 'e', and Esc-only behaviors are not exercised by the gate; verify manually in the TUI.",
+    "The configured foreman 'verify' gate tests the foreman extension, not AskUserQuestion, so it will not validate this change; the relevant check is the legacy logic_test.sh + tsc fallback (verified working in recon).",
+    "Removing cycleFocusMode from index.ts imports must be paired with deleting its only use (cycleFocusedArea) or tsc will flag an unused/undefined symbol; cycleFocusMode stays exported in logic.ts.",
+    "'e' must be gated on !customFocused so it still types into the inline Custom answer input; a missed guard would break custom text entry.",
+    "Tab/Esc paths must call saveActiveNoteFromInput before leaving the note or in-progress note text is lost; goToNextQuestion and saveActiveNoteAndReturnToOptions both save first.",
+    "logic_test.sh guards index.ts against disallowed theme.bg colors and whole-question-note patterns (setNote/question-note/etc.); new helpText and method names avoid these but must be re-checked after edits.",
+    "tsc fallback runs via npx and downloads TypeScript (no local install); an offline environment would block that half of the check. Expected 'Cannot find module' for pi/typebox deps is filtered out.",
+    "Keeping switchQuestionTab only for the Enter advance path is intentional to preserve submit-on-last semantics; do not repoint it in a way that changes submitIfComplete behavior."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [],
+    "services": []
+  }
+}

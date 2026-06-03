@@ -1,0 +1,40 @@
+{
+  "summary": "Implement the requested task in /Users/a1241968/Desktop/Oscar/my-pi-harness using the backend track, then verify it through Foreman's deterministic dev/test loop.",
+  "steps": [
+    "Confirm the relevant files and constraints before editing.",
+    "Developer implements the smallest scoped change and records a structured handoff.",
+    "Controller runs the resolved per-round command gates and treats their exit codes as ground truth.",
+    "Tester judges intent, catches cheats, and sends failures back for another bounded fix round.",
+    "If verification succeeds, pause at Gate 2 for founder ship approval."
+  ],
+  "filesLikely": [],
+  "risks": [
+    "Planner model output was unavailable or invalid, so this deterministic template plan was used.",
+    "Repo-specific edge cases may still be discovered by the developer/tester loop."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [],
+    "services": []
+  }
+}

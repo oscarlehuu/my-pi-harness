@@ -716,7 +716,7 @@ async function connectRemoteDialog(args: {
 		} catch {
 			return;
 		}
-		if (frame.sessionFile !== args.sessionFile || frame.requestId !== args.requestId) return;
+		if (frame.requestId !== args.requestId) return;
 
 		if (frame.op === "ask_answer") {
 			args.settle({ type: "answered", states: remoteAnswerToStates(args.questions, frame.answers) });

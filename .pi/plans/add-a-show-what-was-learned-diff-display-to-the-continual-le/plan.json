@@ -1,0 +1,50 @@
+{
+  "summary": "Add an auto-dismissing 'what was learned' diff widget to the continual-learning extension: a new node-free diff.ts (exact provided content) computes added/removed/reworded learned bullets from before/after AGENTS.md snapshots; learn.ts captures those snapshots around the updater and attaches a LearnedDiff to LearnRunOutcome (best-effort, existing fields intact); index.ts replaces the success notify() with a colored setWidget('continual-learning-diff', lines, {placement:'aboveEditor'}) that clears on a ~30s timer and on the next agent_start, with notify() fallback when the diff is empty; a new headless diff_test.sh verifies the diff and renderer.",
+  "steps": [
+    "Create extensions/continual-learning/diff.ts verbatim from the task (imports only memory.ts; exports diffLearnedMarkdown, diffLearnedSections, isEmptyDiff, renderDiffLines, types).",
+    "learn.ts/runLearningPass: after ensureLearnedScaffold read AGENTS.md as 'before' and on exitCode===0 re-read as 'after', each wrapped in try/catch (never throw); add optional diff?: LearnedDiff (and optionally beforeMarkdown/afterMarkdown) to LearnRunOutcome computed via diffLearnedMarkdown; keep deltaCount/updaterText/reason/index-refresh unchanged.",
+    "index.ts agent_end success path: build a DiffPalette from ctx.ui.theme.fg using toolDiffAdded/toolDiffRemoved/dim/accent, render with renderDiffLines(outcome.diff, outcome.deltaCount, {palette}); when diff present/non-empty call ctx.ui?.setWidget?.('continual-learning-diff', lines, {placement:'aboveEditor'}), else fall back to the existing notify('info'); keep warning/failed paths on notify('warning').",
+    "index.ts auto-dismiss: module-scoped timer handle; setTimeout(~30s) -> ctx.ui?.setWidget?.('continual-learning-diff', undefined), clearing/resetting any prior timer on a new pass; add pi.on('agent_start') that clears the widget and the timer immediately; guard every ctx.ui call with optional chaining.",
+    "index.ts manual registerCommand('continual-learning') success path: apply the same widget display + auto-dismiss as agent_end; preserve nothing-to-do / no-high-signal notify() messages.",
+    "Create executable extensions/continual-learning/test/diff_test.sh (bash + node --input-type=module, ROOT_DIR resolution, node:assert/strict) covering: added/removed bullets, a reworded bullet surfaced as one 'changed' pair (not add+remove), isEmptyDiff true on identical input, and renderDiffLines title +/~/- counts plus maxLines budget with '+N more' footer; print 'diff_test: ALL PASS'; chmod +x.",
+    "Run bash extensions/continual-learning/test/diff_test.sh and bash extensions/continual-learning/test/learn_test.sh and the smoke import to confirm green."
+  ],
+  "filesLikely": [
+    "extensions/continual-learning/diff.ts",
+    "extensions/continual-learning/learn.ts",
+    "extensions/continual-learning/index.ts",
+    "extensions/continual-learning/test/diff_test.sh"
+  ],
+  "risks": [
+    "setWidget/aboveEditor/placement and theme tokens toolDiffAdded/toolDiffRemoved are NOT present anywhere in the repo (the pi host @earendil-works/pi-coding-agent is external, no node_modules); their signatures are assumed from the task contract. Mitigate with ctx.ui?.setWidget?.() optional chaining so RPC/print modes degrade silently.",
+    "fg() throws on unknown tokens (like bg()); the palette must use only dim/accent/toolDiffAdded/toolDiffRemoved, all guarded so a missing theme falls back to PLAIN_PALETTE/notify().",
+    "Auto-dismiss correctness: the ~30s timer and agent_start handler must share one module-scoped handle so a new pass resets (not stacks) timers and agent_start clears both widget and timer; widget host caps at 10 lines (renderDiffLines maxLines default 8 + title stays within budget).",
+    "diff.ts and diff_test.sh do not exist yet, so the legacy/controller fallback command cannot be verified end-to-end until created; only its learn_test.sh half is currently green (verified).",
+    "Existing foreman.json 'verify' gate runs only foreman tests and does not exercise continual-learning; this task's verification relies on the new diff_test.sh + learn_test.sh + smoke import being run (controller fallback) rather than the standing gate."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [],
+    "services": []
+  }
+}

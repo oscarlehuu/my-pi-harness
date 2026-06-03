@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-06-03T10:07:50.659Z",
+  "role": "tester",
+  "round": 2,
+  "sessionId": "37ff3e4b-208a-43c3-bd82-e38e29c48ab2",
+  "successState": "blocked",
+  "summary": "[reviewer] review: unknown (inconclusive)",
+  "raw": "I'll inspect the changed code for this pre-ship review. Let me start by examining the repository state.\nSeveral relevant files are untracked (diff.ts, test/diff_test.sh, memory.ts). Let me inspect the tracked diffs and read the new files.\ndiff.ts matches the spec exactly. Let me read the test file, memory.ts, and the reference test to verify correctness.\ndiff.ts matches the spec. Now let me read the full index.ts to evaluate the wiring in context, and the reference test for style comparison.\nNow let me check the reference test style and verify the host API assumptions (setWidget signature, theme.fg, widget line cap).\nLet me verify the host API contracts the wiring depends on: `setWidget`, `theme.fg`, and the `agent_start` event.\n`theme.fg` is used as `this.theme.fg(...)` in foreman, confirming the method pattern. Let me verify the host API type definitions for `setWidget`, the `agent_start` event existence, and `theme.fg` signature.\nLet me locate the pi-coding-agent type definitions."
+}

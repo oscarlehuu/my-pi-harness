@@ -8,6 +8,9 @@
  *   explanatory text, per-choice notes, and custom free-text answers.
  */
 
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
@@ -27,6 +30,7 @@ import {
 	createHeadlessFallback,
 	createInitialFocusState,
 	createInitialNavigationState,
+	createInitialSelectionState,
 	cycleFocusMode,
 	decideOptionListEnterAction,
 	getChoiceNote,
@@ -35,6 +39,7 @@ import {
 	isCustomOption,
 	moveFocus,
 	moveQuestion,
+	normalizeSelectionState,
 	returnFocusToOptions,
 	setChoiceNote,
 	setCustomText,
@@ -73,6 +78,49 @@ type ThemeLike = {
 type TuiLike = { requestRender: () => void };
 
 type DialogResult = { states: SelectionState[] } | null;
+
+type SocketLike = {
+	readyState: number;
+	send: (data: string) => void;
+	close: (code?: number, reason?: string) => void;
+	addEventListener?: (event: string, handler: (ev?: unknown) => void) => void;
+	onopen?: () => void;
+	onmessage?: (ev: unknown) => void;
+	onclose?: () => void;
+	onerror?: () => void;
+};
+
+type ExecuteContextLike = {
+	sessionManager?: { getSessionFile?: () => string | undefined };
+};
+
+type RemoteDialogResult =
+	| { type: "answered"; states: SelectionState[] }
+	| { type: "dismissed"; reason: string }
+	| { type: "unavailable"; reason: string };
+
+type RemoteAskAnswerItem = {
+	selected?: unknown;
+	custom?: unknown;
+	choiceNotes?: unknown;
+};
+
+type RemoteAskAnswer = Record<string, RemoteAskAnswerItem>;
+
+type RemoteDialogHandle = {
+	promise: Promise<RemoteDialogResult>;
+	cancel: (reason: string) => void;
+};
+
+type LocalDialogHandle = {
+	promise: Promise<DialogResult>;
+	initialStates: SelectionState[];
+	cancel: () => void;
+};
+
+const HANDSHAKE_PATH = join(homedir(), ".pi", "pimote", "daemon.json");
+const WS_OPEN = 1;
+const REMOTE_CONNECT_TIMEOUT_MS = 1_500;
 
 class InlineInputLine implements Component {
 	constructor(
@@ -113,6 +161,14 @@ function cancelledResult(questions: AskUserQuestionItem[], states: Array<Selecti
 	const details = buildStructuredResult(questions, states, { cancelled: true, reason });
 	return {
 		content: [{ type: "text" as const, text: `AskUserQuestion cancelled: ${reason}\n${formatDetailsForContent(details)}` }],
+		details,
+	};
+}
+
+function answeredResult(questions: AskUserQuestionItem[], states: Array<SelectionState | undefined>) {
+	const details = buildStructuredResult(questions, states);
+	return {
+		content: [{ type: "text" as const, text: `AskUserQuestion result:\n${formatDetailsForContent(details)}` }],
 		details,
 	};
 }
@@ -472,6 +528,311 @@ class AskUserQuestionDialog extends Container implements Focusable {
 	}
 }
 
+function startLocalDialog(
+	ctx: { ui: { custom: <T>(renderer: (tui: TuiLike, theme: ThemeLike, keybindings: unknown, done: (result: T) => void) => Component) => Promise<T> } },
+	questions: AskUserQuestionItem[],
+): LocalDialogHandle {
+	const initialNavigation = createInitialNavigationState(questions);
+	let doneFn: ((result: DialogResult) => void) | undefined;
+	let cancelled = false;
+	const promise = ctx.ui.custom<DialogResult>((tui, theme, _keybindings, done) => {
+		doneFn = done;
+		if (cancelled) queueMicrotask(() => done(null));
+		return new AskUserQuestionDialog(questions, initialNavigation, tui, theme, done);
+	});
+
+	return {
+		promise,
+		initialStates: initialNavigation.states,
+		cancel: () => {
+			cancelled = true;
+			try {
+				doneFn?.(null);
+			} catch {
+				// TUI teardown must never affect the tool result.
+			}
+		},
+	};
+}
+
+function startRemoteDialog(questions: AskUserQuestionItem[], ctx: ExecuteContextLike, signal?: AbortSignal): RemoteDialogHandle {
+	const requestId = createRequestId();
+	const sessionFile = safeSessionFile(ctx);
+	let socket: SocketLike | undefined;
+	let connectTimer: ReturnType<typeof setTimeout> | undefined;
+	let settled = false;
+	let resolveResult: (result: RemoteDialogResult) => void = () => undefined;
+
+	const settle = (result: RemoteDialogResult) => {
+		if (settled) return;
+		settled = true;
+		if (connectTimer) clearTimeout(connectTimer);
+		connectTimer = undefined;
+		try {
+			signal?.removeEventListener?.("abort", onAbort);
+		} catch {
+			// Ignore abort listener cleanup failures.
+		}
+		try {
+			if (socket?.readyState === WS_OPEN && sessionFile) {
+				socket.send(JSON.stringify({ op: "ext_unregister", sessionFile }));
+			}
+		} catch {
+			// Ignore unregister failures.
+		}
+		try {
+			socket?.close();
+		} catch {
+			// Ignore close failures.
+		}
+		resolveResult(result);
+	};
+
+	const sendCancel = (reason: string) => {
+		try {
+			if (socket?.readyState === WS_OPEN && sessionFile) {
+				socket.send(JSON.stringify({ op: "ask_cancel", sessionFile, requestId, reason }));
+			}
+		} catch {
+			// Ignore best-effort remote cancellation failures.
+		}
+	};
+
+	const onAbort = () => {
+		sendCancel("AskUserQuestion was aborted.");
+		settle({ type: "dismissed", reason: "AskUserQuestion was aborted." });
+	};
+
+	const promise = new Promise<RemoteDialogResult>((resolve) => {
+		resolveResult = resolve;
+		if (!sessionFile) {
+			settle({ type: "unavailable", reason: "No pi session file is available for Pimote routing." });
+			return;
+		}
+		if (signal?.aborted) {
+			onAbort();
+			return;
+		}
+		try {
+			signal?.addEventListener?.("abort", onAbort, { once: true });
+		} catch {
+			// Ignore abort listener setup failures; execute() still handles pre-aborted signals.
+		}
+
+		void connectRemoteDialog({
+			questions,
+			sessionFile,
+			requestId,
+			settle,
+			isSettled: () => settled,
+			setSocket: (ws) => {
+				socket = ws;
+			},
+			setConnectTimer: (timer) => {
+				connectTimer = timer;
+			},
+			clearConnectTimer: () => {
+				if (connectTimer) clearTimeout(connectTimer);
+				connectTimer = undefined;
+			},
+		}).catch((err) => {
+			settle({ type: "unavailable", reason: `Pimote remote setup failed: ${errMsg(err)}` });
+		});
+	});
+
+	return {
+		promise,
+		cancel: (reason: string) => {
+			sendCancel(reason);
+			settle({ type: "dismissed", reason });
+		},
+	};
+}
+
+async function connectRemoteDialog(args: {
+	questions: AskUserQuestionItem[];
+	sessionFile: string;
+	requestId: string;
+	settle: (result: RemoteDialogResult) => void;
+	isSettled: () => boolean;
+	setSocket: (ws: SocketLike) => void;
+	setConnectTimer: (timer: ReturnType<typeof setTimeout>) => void;
+	clearConnectTimer: () => void;
+}): Promise<void> {
+	let handshake: { port: number; token: string };
+	try {
+		handshake = await readHandshake();
+	} catch (err) {
+		args.settle({ type: "unavailable", reason: `Pimote daemon handshake unavailable: ${errMsg(err)}` });
+		return;
+	}
+	if (args.isSettled()) return;
+
+	const WebSocketCtor = (globalThis as unknown as { WebSocket?: new (url: string) => SocketLike }).WebSocket;
+	if (!WebSocketCtor) {
+		args.settle({ type: "unavailable", reason: "WebSocket is unavailable in this pi runtime." });
+		return;
+	}
+
+	let ws: SocketLike;
+	try {
+		ws = new WebSocketCtor(`ws://127.0.0.1:${handshake.port}/?token=${encodeURIComponent(handshake.token)}`);
+	} catch (err) {
+		args.settle({ type: "unavailable", reason: `Pimote daemon connection failed: ${errMsg(err)}` });
+		return;
+	}
+	if (args.isSettled()) {
+		try {
+			ws.close();
+		} catch {
+			// Ignore close failures after a local winner cancelled the remote path.
+		}
+		return;
+	}
+
+	args.setSocket(ws);
+	args.setConnectTimer(
+		setTimeout(() => {
+			args.settle({ type: "unavailable", reason: "Pimote daemon connection timed out." });
+		}, REMOTE_CONNECT_TIMEOUT_MS),
+	);
+
+	onSocket(ws, "open", () => {
+		args.clearConnectTimer();
+		if (args.isSettled()) return;
+		try {
+			ws.send(JSON.stringify({ op: "ext_register", role: "ask", sessionFile: args.sessionFile }));
+			ws.send(JSON.stringify({ op: "ask_start", sessionFile: args.sessionFile, requestId: args.requestId, questions: args.questions }));
+		} catch (err) {
+			args.settle({ type: "unavailable", reason: `Pimote remote question send failed: ${errMsg(err)}` });
+		}
+	});
+	onSocket(ws, "message", (ev) => {
+		let frame: { op?: string; sessionFile?: unknown; requestId?: unknown; answers?: unknown; reason?: unknown };
+		try {
+			const raw = messageDataToString(ev);
+			if (!raw) return;
+			frame = JSON.parse(raw) as typeof frame;
+		} catch {
+			return;
+		}
+		if (frame.sessionFile !== args.sessionFile || frame.requestId !== args.requestId) return;
+
+		if (frame.op === "ask_answer") {
+			args.settle({ type: "answered", states: remoteAnswerToStates(args.questions, frame.answers) });
+			return;
+		}
+		if (frame.op === "ask_dismiss") {
+			const reason = typeof frame.reason === "string" && frame.reason ? frame.reason : "Dismissed from Pimote.";
+			args.settle(remoteDismissIsUnavailable(reason) ? { type: "unavailable", reason } : { type: "dismissed", reason });
+		}
+	});
+	onSocket(ws, "close", () => {
+		args.settle({ type: "unavailable", reason: "Pimote daemon connection closed before an answer." });
+	});
+	onSocket(ws, "error", () => {
+		args.settle({ type: "unavailable", reason: "Pimote daemon connection failed before an answer." });
+	});
+}
+
+function remoteAnswerToStates(questions: AskUserQuestionItem[], rawAnswers: unknown): SelectionState[] {
+	const answers = isRecord(rawAnswers) ? (rawAnswers as RemoteAskAnswer) : {};
+	return questions.map((question) => {
+		const raw = isRecord(answers[question.header]) ? answers[question.header] : {};
+		const selectedIndexes: number[] = [];
+		const customCandidates: string[] = [];
+
+		for (const label of remoteSelectedLabels(raw.selected)) {
+			const index = question.options.findIndex((option) => option.label === label);
+			if (index >= 0) {
+				selectedIndexes.push(index);
+			} else {
+				customCandidates.push(label);
+			}
+		}
+
+		const explicitCustom = typeof raw.custom === "string" && raw.custom.trim() ? raw.custom : "";
+		const customText = explicitCustom || customCandidates.join(", ");
+		if (customText.trim()) selectedIndexes.push(getCustomOptionIndex(question));
+
+		const choiceNotes: Record<number, string> = {};
+		if (isRecord(raw.choiceNotes)) {
+			for (const [label, note] of Object.entries(raw.choiceNotes)) {
+				if (typeof note !== "string") continue;
+				const index = question.options.findIndex((option) => option.label === label);
+				if (index >= 0) choiceNotes[index] = note;
+			}
+		}
+
+		return normalizeSelectionState(question, {
+			...createInitialSelectionState(question),
+			focusedIndex: selectedIndexes[0] ?? 0,
+			selectedIndexes,
+			customText,
+			choiceNotes,
+		});
+	});
+}
+
+function remoteSelectedLabels(value: unknown): string[] {
+	const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+	return values.filter((item): item is string => typeof item === "string" && item !== CUSTOM_ANSWER_LABEL);
+}
+
+function remoteDismissIsUnavailable(reason: string): boolean {
+	const lower = reason.toLowerCase();
+	return lower.includes("no pimote client") || lower.includes("all pimote clients") || lower.includes("unavailable");
+}
+
+async function readHandshake(): Promise<{ port: number; token: string }> {
+	const parsed = JSON.parse(await readFile(HANDSHAKE_PATH, "utf8")) as { port?: unknown; token?: unknown };
+	if (typeof parsed.port !== "number" || !Number.isInteger(parsed.port) || typeof parsed.token !== "string" || !parsed.token) {
+		throw new Error("invalid Pimote daemon handshake");
+	}
+	return { port: parsed.port, token: parsed.token };
+}
+
+function safeSessionFile(ctx: ExecuteContextLike): string | undefined {
+	try {
+		const value = ctx.sessionManager?.getSessionFile?.();
+		return typeof value === "string" && value ? value : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function createRequestId(): string {
+	return `ask-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function onSocket(ws: SocketLike, event: "open" | "message" | "close" | "error", handler: (ev?: unknown) => void): void {
+	try {
+		if (ws.addEventListener) ws.addEventListener(event, handler);
+		else if (event === "open") ws.onopen = () => handler();
+		else if (event === "message") ws.onmessage = (ev) => handler(ev);
+		else if (event === "close") ws.onclose = () => handler();
+		else if (event === "error") ws.onerror = () => handler();
+	} catch {
+		// Ignore event wiring failures; the timeout/close handling will recover.
+	}
+}
+
+function messageDataToString(ev: unknown): string | undefined {
+	const data = typeof ev === "object" && ev !== null && "data" in ev ? (ev as { data?: unknown }).data : ev;
+	if (typeof data === "string") return data;
+	if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+	if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+	return undefined;
+}
+
+function errMsg(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
 export default function AskUserQuestion(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "AskUserQuestion",
@@ -487,10 +848,6 @@ export default function AskUserQuestion(pi: ExtensionAPI) {
 		async execute(_toolCallId, params: { questions: AskUserQuestionItem[] }, signal, _onUpdate, ctx) {
 			const questions = params.questions ?? [];
 
-			if (!ctx.hasUI) {
-				return nonInteractiveResult(questions);
-			}
-
 			if (questions.length === 0) {
 				return cancelledResult(questions, [], "No questions were provided.");
 			}
@@ -499,20 +856,40 @@ export default function AskUserQuestion(pi: ExtensionAPI) {
 				return cancelledResult(questions, [], "AskUserQuestion was aborted.");
 			}
 
-			const initialNavigation = createInitialNavigationState(questions);
-			const result = await ctx.ui.custom<DialogResult>((tui, theme, _keybindings, done) => {
-				return new AskUserQuestionDialog(questions, initialNavigation, tui, theme, done);
-			});
+			const remote = startRemoteDialog(questions, ctx, signal);
 
-			if (!result) {
-				return cancelledResult(questions, initialNavigation.states, "User cancelled AskUserQuestion.");
+			if (!ctx.hasUI) {
+				const remoteResult = await remote.promise;
+				if (remoteResult.type === "answered") return answeredResult(questions, remoteResult.states);
+				if (remoteResult.type === "dismissed") {
+					return cancelledResult(questions, createInitialNavigationState(questions).states, remoteResult.reason);
+				}
+				return nonInteractiveResult(questions);
 			}
 
-			const details = buildStructuredResult(questions, result.states);
-			return {
-				content: [{ type: "text" as const, text: `AskUserQuestion result:\n${formatDetailsForContent(details)}` }],
-				details,
-			};
+			const local = startLocalDialog(ctx, questions);
+			const first = await Promise.race([
+				local.promise.then((result) => ({ source: "local" as const, result })),
+				remote.promise.then((result) => ({ source: "remote" as const, result })),
+			]);
+
+			if (first.source === "remote") {
+				if (first.result.type === "unavailable") {
+					const localResult = await local.promise;
+					if (!localResult) return cancelledResult(questions, local.initialStates, "User cancelled AskUserQuestion.");
+					return answeredResult(questions, localResult.states);
+				}
+
+				local.cancel();
+				if (first.result.type === "answered") return answeredResult(questions, first.result.states);
+				return cancelledResult(questions, local.initialStates, first.result.reason);
+			}
+
+			remote.cancel("Answered in the local terminal.");
+			if (!first.result) {
+				return cancelledResult(questions, local.initialStates, "User cancelled AskUserQuestion.");
+			}
+			return answeredResult(questions, first.result.states);
 		},
 
 		renderCall(args, theme, _context) {

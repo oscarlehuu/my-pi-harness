@@ -70,8 +70,17 @@ subscription quota, not billed credits. Never replace that prompt with `--system
 Route-through-Foreman safety is enforced by `guard.ts`: main-session `edit`/`write` and mutating
 `bash` calls that would make impactful repo changes are blocked with instructions to start a Foreman
 task instead. The guard allows read-only tools and no-impact paths such as prose docs, scratch dirs,
-or paths outside the repo; crew subprocesses set `FOREMAN_CREW=1`, and `/foreman-direct` is the
-explicit session escape hatch.
+or paths outside the repo; crew subprocesses set `FOREMAN_CREW=1`.
+
+Foreman engagement is persisted per repo in the pi agent dir (or `FOREMAN_ENGAGEMENT_STORE` in tests),
+not in project-local `.pi/` state. Engagement is ON by default. `/foreman-direct` toggles persisted
+direct-edit mode for the current repo, and `foreman({ engage: true|false })` sets it explicitly. In a
+non-git cwd, behavior is binary: engaged ON treats the current cwd as the project root and gates
+impactful edits below it; engaged OFF allows direct edits there. `session_start` is passive: it reads
+engagement and updates status only. On the first impactful mutation in a non-git cwd, the CTO asks the
+founder with an `AskUserQuestion` single-select: `Init git + Foreman` (run `git init`, then start the
+normal Foreman task) or `Disable Foreman for this repo` (call `foreman({ engage: false })`; reversible
+with `foreman({ engage: true })` or `/foreman-direct`). Quick questions/read-only recon stay silent.
 
 ## Docs structure
 

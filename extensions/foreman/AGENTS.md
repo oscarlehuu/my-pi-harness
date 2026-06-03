@@ -22,6 +22,17 @@ Use the foreman loop unless one of these is true:
 When in doubt, prefer foreman. If you're about to edit code in the main session for anything
 beyond a trivial change, stop and start a foreman task instead.
 
+Foreman engagement is persisted per repo outside the project (under the pi agent dir; tests may set
+`FOREMAN_ENGAGEMENT_STORE`). It is ON by default. `/foreman-direct` toggles the current repo into or
+out of persisted direct-edit mode, and `foreman({ engage: true|false })` sets the same bit explicitly.
+In a non-git cwd the behavior is binary: engaged ON treats the current cwd as the project root and
+gates impactful edits below it; engaged OFF allows direct edits there. No engagement state is written
+to `.pi/` or any other project-local file, and `session_start` only reads the store to display status.
+On the first impactful mutation in a non-git cwd, ask the founder with `AskUserQuestion` single-select:
+`Init git + Foreman` (run `git init`, then start the normal Foreman task) or `Disable Foreman for this
+repo` (call `foreman({ engage: false })`; reversible with `foreman({ engage: true })` or
+`/foreman-direct`). Quick questions/read-only recon stay silent.
+
 ## What this project is
 
 > This charter loads globally, so it applies in **whatever repo this session runs in**. The

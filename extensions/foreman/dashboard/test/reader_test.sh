@@ -199,14 +199,14 @@ try {
   });
 
   writeJsonl(path.join(transcriptsDir, devTranscript), [
-    { t: "2026-05-31T12:00:02.000Z", kind: "agent_start", role: "developer", round: 1, model: "test/model", task: "Demo task" },
-    { t: "2026-05-31T12:00:02.100Z", kind: "tool_call", name: "read", args: { path: "calc.py", offset: 1, limit: 20 } },
-    { t: "2026-05-31T12:00:02.200Z", kind: "tool_result", name: "read", ok: true, preview: "def add(a, b):" },
-    { t: "2026-05-31T12:00:02.300Z", kind: "text", text: "I found the bug." },
-    { t: "2026-05-31T12:00:02.400Z", kind: "usage", input: 1200, output: 300, cost: 0.01, contextTokens: 4096 },
-    { t: "2026-05-31T12:00:02.500Z", kind: "tool_call", name: "edit", args: { path: "extensions/foreman/index.ts" } },
-    { t: "2026-05-31T12:00:02.600Z", kind: "usage", input: 2200, output: 500, cost: 0.02, contextTokens: 44000 },
-    { t: "2026-05-31T12:00:02.700Z", kind: "agent_end", stopReason: "end", exitCode: 0 },
+    { t: "2026-05-31T12:00:53.000Z", kind: "agent_start", role: "developer", round: 1, model: "test/model", task: "Demo task" },
+    { t: "2026-05-31T12:01:11.100Z", kind: "tool_call", name: "read", args: { path: "calc.py", offset: 1, limit: 20 } },
+    { t: "2026-05-31T12:01:11.200Z", kind: "tool_result", name: "read", ok: true, preview: "def add(a, b):" },
+    { t: "2026-05-31T12:01:11.300Z", kind: "text", text: "I found the bug." },
+    { t: "2026-05-31T12:01:11.400Z", kind: "usage", input: 1200, output: 300, cost: 0.01, contextTokens: 4096 },
+    { t: "2026-05-31T12:01:12.000Z", kind: "tool_call", name: "edit", args: { path: "extensions/foreman/index.ts" } },
+    { t: "2026-05-31T12:01:12.100Z", kind: "usage", input: 2200, output: 500, cost: 0.02, contextTokens: 44000 },
+    { t: "2026-05-31T12:01:12.700Z", kind: "agent_end", stopReason: "end", exitCode: 0 },
   ], "{ deliberately truncated final line");
 
   assert.deepEqual(reader.listTasks(path.join(tmp, "missing")), [], "missing repo has no tasks");
@@ -282,7 +282,9 @@ try {
   assert.equal(liveStatus.liveAction, "editing index.ts", "last tool_call becomes a human live action");
   assert.equal(liveStatus.toolCount, 2, "tool_call events are counted");
   assert.equal(liveStatus.ctxTokens, 44000, "latest usage.contextTokens is surfaced");
-  assert.equal(liveStatus.elapsedMs, 72000, "elapsed is derived from agent_start.t and injected now");
+  assert.equal(liveStatus.elapsedMs, 21000, "elapsed is derived from agent_start.t and injected now");
+  assert.equal(liveStatus.lastMovementMs, 2000, "lastMovementMs is derived from the last tool_call.t and injected now");
+  assert.equal(liveStatus.stage, "dev", "developer round 1 maps to the dev step");
   assert.ok(liveStatus.label.length <= 37, "task label is bounded for the footer");
 
   const missingTranscriptModel = reader.buildStatuslineModel(repo, { sessionId: "sess-missing", now: nowMs });
@@ -291,6 +293,7 @@ try {
   assert.equal(missingTranscriptModel[0].toolCount, undefined, "absent transcript omits toolCount");
   assert.equal(missingTranscriptModel[0].ctxTokens, undefined, "absent transcript omits ctxTokens");
   assert.equal(missingTranscriptModel[0].elapsedMs, undefined, "absent transcript omits elapsedMs");
+  assert.equal(missingTranscriptModel[0].lastMovementMs, undefined, "absent transcript omits lastMovementMs");
 
   assert.deepEqual(
     reader.buildStatuslineModel(repo, { sessionId: "nobody", now: nowMs }),
@@ -299,14 +302,16 @@ try {
   );
 
   const staleModel = reader.buildStatuslineModel(repo, { sessionId: "sess-owner", now: nowMs + 60000 });
-  assert.equal(staleModel[0].phase, null, "stale activity is not treated as a live agent");
-  assert.equal(staleModel[0].glyph, "idle", "in_progress with stale activity falls back to idle");
+  assert.equal(staleModel[0].phase, "developer", "footer liveness survives past staleMs for active non-done tasks");
+  assert.equal(staleModel[0].glyph, "idle", "picker-oriented running glyph still falls back to idle after staleMs");
+  assert.equal(staleModel[0].lastMovementMs, 62000, "liveness movement keeps advancing past staleMs");
 
   const slLine = reader.formatStatusLine(slModel, { frame: 0, maxWidth: 160 });
   assert.ok(slLine.startsWith("FOREMAN "), "footer line carries the FOREMAN brand prefix");
-  assert.ok(slLine.includes("DEV"), "footer line shows the live role badge");
-  assert.ok(slLine.includes("R1/3"), "footer line shows round/max");
-  assert.ok(slLine.includes("1m 12s"), "footer line shows elapsed time");
+  assert.ok(slLine.includes("✓plan ●dev ○test ○fix ○ship"), "footer line shows the fixed stage stepper");
+  assert.ok(slLine.includes("r1/3"), "footer line shows round/max");
+  assert.ok(slLine.includes("21s"), "footer line shows elapsed time");
+  assert.ok(slLine.includes("moved 2s ago"), "footer line shows last movement age");
   assert.ok(slLine.includes("editing index.ts"), "footer line shows the live action");
   assert.ok(slLine.includes("◆ Phase B planner"), "footer line includes a short gate chip");
   assert.ok(slLine.endsWith("✓1"), "footer line collapses done tasks into a trailing count chip");
@@ -319,36 +324,74 @@ try {
     "the live spinner animates across frames",
   );
   assert.equal(reader.formatStatusLine([]), "", "empty model clears the status line");
-  assert.equal(reader.formatStatusLine([{ ...slModel[2] }]), "", "done-only model clears the status line");
+  assert.equal(
+    reader.formatStatusLine([{ ...slModel[2] }]),
+    "FOREMAN  idle · last: owned-done-task ✓ done r2/2",
+    "done-only model renders the idle/last task footer",
+  );
   assert.ok(
     reader.formatStatusLine(slModel, { color: (token, text) => `<${token}>${text}</${token}>`, frame: 0, maxWidth: 1000 }).includes("<accent>"),
     "format applies the injected colorizer",
   );
 
-  const verifyBadgeTask = {
-    slug: "verify-badge",
+  const baseStageTask = {
+    slug: "stage-task",
     label: "Pimote daemon",
     state: "in_progress",
-    phase: "verify",
+    phase: "developer",
     glyph: "running",
     round: 1,
     maxRounds: 3,
-    detail: "verify",
+    detail: "dev",
+    elapsedMs: 21000,
+    lastMovementMs: 2000,
+    liveAction: "running npm test",
   };
-  const devBadgeTask = { ...verifyBadgeTask, slug: "dev-badge", phase: "developer", detail: "dev" };
-  const verifyBadgeLine = reader.formatStatusLine([verifyBadgeTask], { frame: 0, maxWidth: 120 });
-  const devBadgeLine = reader.formatStatusLine([devBadgeTask], { frame: 0, maxWidth: 120 });
-  assert.ok(verifyBadgeLine.includes("VERIFY Pimote daemon"), "VERIFY badge keeps a trailing gap before the label");
-  assert.ok(!verifyBadgeLine.includes("VERIFYPimote daemon"), "VERIFY badge is not flush against the label");
-  assert.equal(
-    verifyBadgeLine.indexOf("Pimote daemon"),
-    devBadgeLine.indexOf("Pimote daemon"),
-    "DEV and VERIFY badges share a fixed badge column",
-  );
+  const lineFor = (patch, opts = {}) => reader.formatStatusLine([{ ...baseStageTask, ...patch }], { frame: 1, maxWidth: 1000, ...opts });
+  assert.ok(lineFor({ phase: "planner", liveRole: "planner", round: 0, detail: "plan" }).includes("●plan ○dev ○test ○fix ○ship"), "planner maps to the plan step");
+  assert.ok(lineFor({ phase: "developer", round: 1, detail: "dev" }).includes("✓plan ●dev ○test ○fix ○ship"), "developer round 1 maps to the dev step");
+  assert.ok(lineFor({ phase: "verify", liveRole: "verify", detail: "verify" }).includes("✓plan ✓dev ●test ○fix ○ship"), "verify maps to the test step");
+  assert.ok(lineFor({ phase: "tester", liveRole: "tester", detail: "test" }).includes("✓plan ✓dev ●test ○fix ○ship"), "tester maps to the test step");
+  assert.ok(lineFor({ phase: "developer", round: 2, detail: "dev" }).includes("✓plan ✓dev ✓test ●fix ○ship"), "developer round 2 maps to the fix step with test done");
+  const shipLine = lineFor({ state: "awaiting_ship", phase: null, glyph: "gate", stage: "ship", round: 2, detail: "ship?" });
+  assert.ok(shipLine.includes("✓plan ✓dev ✓test ✓fix ●ship"), "awaiting_ship maps to the ship step");
+  assert.ok(shipLine.includes("◆ awaiting ship · approve?"), "awaiting_ship renders as an approval prompt");
+
+  const formatWithBg = (lastMovementMs, patch = {}) => {
+    const tokens = [];
+    const line = reader.formatStatusLine([{ ...baseStageTask, lastMovementMs, ...patch }], {
+      frame: 0,
+      maxWidth: 1000,
+      bg: (token, text) => {
+        tokens.push(token);
+        return `<bg:${token}>${text}</bg:${token}>`;
+      },
+    });
+    return { line, tokens };
+  };
+  assert.deepEqual(formatWithBg(59999).tokens, [], "healthy movement under 60s does not tint the bar");
+  const stalling = formatWithBg(60000);
+  assert.deepEqual(stalling.tokens, ["warning"], "movement at 60s tints the whole bar warning");
+  assert.ok(stalling.line.startsWith("<bg:warning>FOREMAN"), "warning tint wraps the whole FOREMAN band");
+  assert.ok(stalling.line.includes("⚠"), "stalling uses the warning liveness glyph");
+  const stuck = formatWithBg(180000);
+  assert.deepEqual(stuck.tokens, ["error"], "movement at 180s tints the whole bar error");
+  assert.ok(stuck.line.startsWith("<bg:error>FOREMAN"), "error tint wraps the whole FOREMAN band");
+  assert.ok(stuck.line.includes("✗ NO MOVEMENT"), "stuck uses the no-movement liveness text");
+  const awaitingShip = formatWithBg(180000, { state: "awaiting_ship", phase: null, glyph: "gate", stage: "ship", round: 2, detail: "ship?" });
+  assert.deepEqual(awaitingShip.tokens, [], "awaiting_ship is not an alarm and does not tint");
+  assert.ok(awaitingShip.line.includes("◆ awaiting ship · approve?"), "awaiting_ship keeps the warning approval accent");
+
+  const narrowLine = lineFor({ phase: "tester", liveRole: "tester", round: 2, detail: "test", liveAction: "running a very long test command" }, { maxWidth: 34 });
+  assert.ok(narrowLine.includes("●test"), "narrow footer keeps the current stage");
+  assert.ok(narrowLine.includes("r2/3"), "narrow footer keeps the round");
+  assert.ok(narrowLine.includes("21s ·2s"), "narrow footer keeps compact liveness");
+  assert.ok(!narrowLine.includes("moved"), "narrow footer drops right-side liveness prose first");
+  assert.ok(visibleLength(narrowLine) <= 34, "narrow footer respects the requested max width");
 
   const longLabelLine = reader.formatStatusLine(
-    [{ ...verifyBadgeTask, label: "Fix two cosmetic bugs in the Foreman status panel shipped in commit b3bac70…" }],
-    { frame: 0, maxWidth: 80 },
+    [{ ...baseStageTask, label: "Fix two cosmetic bugs in the Foreman status panel shipped in commit b3bac70…" }],
+    { frame: 0, maxWidth: 140 },
   );
   assert.ok(!longLabelLine.includes("…"), "footer word-clips labels without a Unicode ellipsis");
   assert.ok(longLabelLine.includes("Fix two cosmetic bugs"), "footer keeps the useful head of a long label");

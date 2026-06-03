@@ -1180,8 +1180,9 @@ export default function (pi: ExtensionAPI) {
 				if (typeof setStatus !== "function") return;
 				const theme = ctx.ui?.theme;
 				const color = typeof theme?.fg === "function" ? (token: string, text: string) => theme.fg(token, text) : undefined;
+				const bg = typeof theme?.bg === "function" ? (token: string, text: string) => theme.bg(token, text) : undefined;
 				const model = buildStatuslineModel(cwd, { sessionId, now: Date.now() });
-				const line = formatStatusLine(model, { color, frame: statusFrame, maxWidth: 160, now: Date.now() });
+				const line = formatStatusLine(model, { color, bg, frame: statusFrame, maxWidth: 160, now: Date.now() });
 				setStatus.call(ctx.ui, STATUS_KEY, line || undefined);
 			};
 			const clearStatus = () => {

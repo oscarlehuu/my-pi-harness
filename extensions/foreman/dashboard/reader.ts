@@ -337,12 +337,16 @@ export type StatuslineGlyph = "running" | "gate" | "escalated" | "done" | "idle"
 
 export type StatuslinePhase = "developer" | "verify" | "tester" | "planner" | "reviewer";
 
+export type StatuslineStage = "plan" | "dev" | "test" | "fix" | "ship";
+
 export interface StatuslineTask {
 	slug: string;
 	label: string;
 	state: string;
 	/** Live crew phase from activity.json when the task is actively running, else null. */
 	phase: StatuslinePhase | null;
+	/** Founder-facing stage for the fixed plan→dev→test→fix→ship footer stepper. */
+	stage?: StatuslineStage;
 	glyph: StatuslineGlyph;
 	/** Current round, when known (0 = not started). */
 	round: number;
@@ -359,13 +363,17 @@ export interface StatuslineTask {
 	ctxTokens?: number;
 	/** Milliseconds since the active transcript's agent_start.t, injected from opts.now. */
 	elapsedMs?: number;
+	/** Milliseconds since the last tool_call.t in the active transcript, injected from opts.now. */
+	lastMovementMs?: number;
 }
 
 export interface StatuslineOptions {
 	/** Only include tasks owned by this session. Omit to include all tasks in the repo. */
 	sessionId?: string;
-	/** Activity older than this (ms) is treated as not-live (crashed run). Default 20s. */
+	/** Activity older than this (ms) is treated as not-live for picker attention. Default 20s. */
 	staleMs?: number;
+	/** Keep footer liveness/stepper data for active non-done tasks this long. Default 5m. */
+	livenessMs?: number;
 	/** "now" injection for deterministic tests. */
 	now?: number;
 }
@@ -403,6 +411,7 @@ interface ActiveTranscriptInfo {
 	toolCount?: number;
 	ctxTokens?: number;
 	elapsedMs?: number;
+	lastMovementMs?: number;
 }
 
 function argsRecord(value: unknown): JsonRecord {
@@ -500,16 +509,31 @@ function readActiveTranscriptInfo(cwd: string, slug: string, activity: ForemanAc
 			if (event.kind === "usage" && event.contextTokens > 0) ctxTokens = event.contextTokens;
 		}
 		const liveRole = inferLiveRole(activity.phase, role, activity.note);
+		const lastToolCallMs = lastToolCall?.t ? parseTime(lastToolCall.t) : 0;
 		return {
 			...(liveRole ? { role: liveRole } : {}),
 			...(lastToolCall ? { liveAction: actionFromToolCall(lastToolCall) } : fallbackLiveAction(liveRole) ? { liveAction: fallbackLiveAction(liveRole) } : {}),
 			...(toolCount > 0 ? { toolCount } : {}),
 			...(ctxTokens !== undefined ? { ctxTokens } : {}),
 			...(startMs !== undefined ? { elapsedMs: Math.max(0, now - startMs) } : {}),
+			...(lastToolCallMs > 0 ? { lastMovementMs: Math.max(0, now - lastToolCallMs) } : {}),
 		};
 	} catch {
 		return {};
 	}
+}
+
+const STATUSLINE_STAGES: StatuslineStage[] = ["plan", "dev", "test", "fix", "ship"];
+
+function statuslineStage(state: string, phase: StatuslinePhase | null, role: string | undefined, round: number): StatuslineStage | undefined {
+	if (state === "awaiting_ship" || state === "ship") return "ship";
+	if (state === "planning") return "plan";
+	const normalizedRole = role?.toLowerCase();
+	if (normalizedRole === "planner" || phase === "planner") return "plan";
+	if (normalizedRole === "tester" || normalizedRole === "verify" || phase === "tester" || phase === "verify") return "test";
+	if (normalizedRole === "reviewer" || phase === "reviewer") return "test";
+	if (normalizedRole === "developer" || phase === "developer") return round >= 2 ? "fix" : "dev";
+	return undefined;
 }
 
 /**
@@ -519,25 +543,31 @@ function readActiveTranscriptInfo(cwd: string, slug: string, activity: ForemanAc
  */
 export function buildStatuslineModel(cwd: string, opts: StatuslineOptions = {}): StatuslineTask[] {
 	const staleMs = opts.staleMs ?? 20000;
+	const livenessMs = Math.max(staleMs, opts.livenessMs ?? 300000);
 	const now = opts.now ?? Date.now();
 	const tasks = listTasks(cwd).filter((t) => (opts.sessionId ? t.ownerSessionId === opts.sessionId : true));
 	return tasks.map((t) => {
 		const activity = readActivity(cwd, t.slug);
-		const fresh = activity ? now - parseTime(activity.updatedAt) <= staleMs : false;
-		const phase = activity && fresh && t.state !== "done" ? livePhase(activity.phase) : null;
-		const liveInfo: ActiveTranscriptInfo = activity && fresh && t.state !== "done" && phase ? readActiveTranscriptInfo(cwd, t.slug, activity, now) : {};
-		const liveRole = activity && fresh && t.state !== "done" && phase ? (liveInfo.role ?? inferLiveRole(activity.phase, undefined, activity.note)) : undefined;
+		const activityAgeMs = activity ? now - parseTime(activity.updatedAt) : Number.POSITIVE_INFINITY;
+		const fresh = activity ? activityAgeMs <= staleMs : false;
+		const livenessFresh = activity ? activityAgeMs <= livenessMs : false;
+		const phase = activity && livenessFresh && t.state !== "done" ? livePhase(activity.phase) : null;
+		const liveInfo: ActiveTranscriptInfo = activity && livenessFresh && t.state !== "done" && phase ? readActiveTranscriptInfo(cwd, t.slug, activity, now) : {};
+		const liveRole = activity && livenessFresh && t.state !== "done" && phase ? (liveInfo.role ?? inferLiveRole(activity.phase, undefined, activity.note)) : undefined;
+		const stage = statuslineStage(t.state, phase, liveRole, t.round);
 		let glyph: StatuslineGlyph;
 		if (t.state === "done") glyph = "done";
 		else if (t.state === "escalated") glyph = "escalated";
-		else if (t.state === "awaiting_ship" || t.state === "planning") glyph = "gate";
-		else if (phase) glyph = "running";
+		else if (t.state === "awaiting_ship") glyph = "gate";
+		else if (fresh && phase) glyph = "running";
+		else if (t.state === "planning") glyph = "gate";
 		else glyph = "idle";
 		return {
 			slug: t.slug,
 			label: shortLabel(t.task, t.slug),
 			state: t.state,
 			phase,
+			...(stage ? { stage } : {}),
 			glyph,
 			round: t.round,
 			maxRounds: t.maxRounds,
@@ -547,6 +577,7 @@ export function buildStatuslineModel(cwd: string, opts: StatuslineOptions = {}):
 			...(liveInfo.toolCount !== undefined ? { toolCount: liveInfo.toolCount } : {}),
 			...(liveInfo.ctxTokens !== undefined ? { ctxTokens: liveInfo.ctxTokens } : {}),
 			...(liveInfo.elapsedMs !== undefined ? { elapsedMs: liveInfo.elapsedMs } : {}),
+			...(liveInfo.lastMovementMs !== undefined ? { lastMovementMs: liveInfo.lastMovementMs } : {}),
 		};
 	});
 }
@@ -593,6 +624,8 @@ export interface FormatStatusLineOptions {
 	maxWidth?: number;
 	/** Colorizer (token, text) => text. Default identity (plain text, used by tests). */
 	color?: (token: string, text: string) => string;
+	/** Background colorizer (token, text) => text. Default identity (plain text, used by tests). */
+	bg?: (token: string, text: string) => string;
 	/** Animation frame for the live spinner (0..n). Lets the running task pulse. */
 	frame?: number;
 	/** Reserved for deterministic callers; elapsed is precomputed in the model. */
@@ -612,7 +645,7 @@ export interface SortForPickerOptions {
 }
 
 function statusAttentionRank(task: StatuslineTask): number {
-	if (task.glyph === "running") return 0;
+	if (isStatuslineLive(task)) return 0;
 	if (task.glyph === "gate") return 1;
 	if (task.glyph === "escalated") return 2;
 	if (task.state === "done") return 4;
@@ -627,12 +660,12 @@ function pickerAttentionRank(task: ForemanTaskSummary, liveSlugs: Set<string>): 
 	return 3;
 }
 
-function roleBadge(task: StatuslineTask): string {
-	if (task.liveRole === "planner" || task.phase === "planner") return "PLAN";
-	if (task.liveRole === "reviewer" || task.phase === "reviewer") return "REVIEW";
-	if (task.phase === "verify" || task.liveRole === "verify") return "VERIFY";
-	if (task.phase === "tester" || task.liveRole === "tester") return "TEST";
-	return "DEV";
+function stageForTask(task: StatuslineTask): StatuslineStage | undefined {
+	return task.stage ?? statuslineStage(task.state, task.phase, task.liveRole, task.round);
+}
+
+function isStatuslineLive(task: StatuslineTask): boolean {
+	return task.state !== "done" && task.state !== "awaiting_ship" && Boolean(stageForTask(task) && (task.phase || task.elapsedMs !== undefined || task.lastMovementMs !== undefined || task.glyph === "running"));
 }
 
 export function formatElapsed(ms: number | undefined): string {
@@ -677,8 +710,61 @@ function footerLiveAction(action: string): string {
 	return wordClip(clean, 32);
 }
 
+function stageStep(stage: StatuslineStage | undefined, candidate: StatuslineStage): "done" | "current" | "todo" {
+	const currentIndex = stage ? STATUSLINE_STAGES.indexOf(stage) : -1;
+	const candidateIndex = STATUSLINE_STAGES.indexOf(candidate);
+	if (currentIndex < 0 || candidateIndex > currentIndex) return "todo";
+	return candidateIndex === currentIndex ? "current" : "done";
+}
+
+function renderStageStepper(task: StatuslineTask, color: (token: string, text: string) => string, compact: boolean): string {
+	const stage = stageForTask(task);
+	if (!stage) return color("muted", "○stage");
+	if (compact) return color("accent", `●${stage}`);
+	return STATUSLINE_STAGES.map((candidate) => {
+		const state = stageStep(stage, candidate);
+		if (state === "done") return color("success", `✓${candidate}`);
+		if (state === "current") return color("accent", `●${candidate}`);
+		return color("muted", `○${candidate}`);
+	}).join(" ");
+}
+
+function roundText(task: StatuslineTask): string {
+	return `r${task.round}/${task.maxRounds || "?"}`;
+}
+
+type LivenessAlarm = "healthy" | "stalling" | "stuck";
+
+function livenessAlarm(task: StatuslineTask): LivenessAlarm {
+	if (task.lastMovementMs !== undefined && task.lastMovementMs >= 180000) return "stuck";
+	if (task.lastMovementMs !== undefined && task.lastMovementMs >= 60000) return "stalling";
+	return "healthy";
+}
+
+function statuslineTintToken(task: StatuslineTask): "warning" | "error" | undefined {
+	if (!isStatuslineLive(task) || task.state === "awaiting_ship") return undefined;
+	const alarm = livenessAlarm(task);
+	if (alarm === "stuck") return "error";
+	if (alarm === "stalling") return "warning";
+	return undefined;
+}
+
+function renderLiveness(task: StatuslineTask, color: (token: string, text: string) => string, frame: number, compact: boolean): string {
+	const alarm = livenessAlarm(task);
+	if (alarm === "stuck") return `${color("error", "✗")} ${color("error", "NO MOVEMENT")}`;
+	const glyph = alarm === "stalling" ? color("warning", "⚠") : color("accent", SPINNER[frame % SPINNER.length]);
+	const elapsed = formatElapsed(task.elapsedMs);
+	const moved = formatElapsed(task.lastMovementMs);
+	const parts: string[] = [];
+	if (elapsed) parts.push(elapsed);
+	if (moved) parts.push(compact ? `·${moved}` : `moved ${moved} ago`);
+	if (parts.length === 0) parts.push("live");
+	return `${glyph} ${color("muted", parts.join(compact ? " " : " · "))}`;
+}
+
 function gatePrompt(task: StatuslineTask): string {
-	return task.state === "planning" ? "plan?" : "ship?";
+	if (task.state === "awaiting_ship") return "awaiting ship · approve?";
+	return task.state === "planning" ? "planning · approve?" : "gate";
 }
 
 function renderLeadTask(
@@ -689,19 +775,21 @@ function renderLeadTask(
 	runningTailLevel = 2,
 ): string {
 	const label = footerLabel(task.label, labelMax);
-	if (task.glyph === "running") {
-		const spinner = color("accent", SPINNER[frame % SPINNER.length]);
-		const badge = color("accent", roleBadge(task).padEnd(7));
-		const tailParts = [`R${task.round}/${task.maxRounds || "?"}`];
-		const elapsed = formatElapsed(task.elapsedMs);
-		if (runningTailLevel >= 1 && elapsed) tailParts.push(elapsed);
-		if (runningTailLevel >= 2 && task.liveAction) {
+	const compact = runningTailLevel <= 0;
+	const stage = stageForTask(task);
+	if (isStatuslineLive(task)) {
+		const parts = [renderStageStepper(task, color, compact), color("muted", roundText(task)), renderLiveness(task, color, frame, compact)];
+		if (runningTailLevel >= 1 && task.liveAction) {
 			const action = footerLiveAction(task.liveAction);
-			if (action) tailParts.push(action);
+			if (action) parts.push(color("text", action));
 		}
-		return `${spinner} ${badge}${color("text", label)} ${color("dim", "·")} ${color("muted", tailParts.join(" · "))}`;
+		if (runningTailLevel >= 2 && label) parts.push(color("dim", label));
+		return parts.join("  ");
 	}
-	if (task.glyph === "gate") return `${color("warning", "◆")} ${color("warning", gatePrompt(task))} ${color("text", label)}`;
+	if (task.glyph === "gate") {
+		const gate = `${color("warning", "◆")} ${color("warning", gatePrompt(task))}`;
+		return stage ? `${renderStageStepper(task, color, compact)}  ${color("muted", roundText(task))}  ${gate}` : `${gate} ${color("text", label)}`;
+	}
 	if (task.glyph === "escalated") return `${color("error", "⚠")} ${color("warning", "stuck")} ${color("text", label)}`;
 	return `${color("muted", "·")} ${color("muted", "idle")} ${color("text", label)}`;
 }
@@ -728,13 +816,22 @@ function orderedNonDoneTasks(model: StatuslineTask[]): StatuslineTask[] {
  */
 export function formatStatusLine(model: StatuslineTask[], opts: FormatStatusLineOptions = {}): string {
 	const active = orderedNonDoneTasks(model);
-	if (active.length === 0) return "";
 	const color = opts.color ?? ((_token, text) => text);
+	const bg = opts.bg ?? ((_token, text) => text);
 	const frame = opts.frame ?? 0;
 	const maxWidth = Math.max(1, Math.floor(opts.maxWidth ?? 160));
 	const doneCount = model.length - active.length;
 	const brand = color("accent", "FOREMAN");
 	const sep = color("dim", "   ");
+	if (active.length === 0) {
+		const last = model[0];
+		if (!last) return "";
+		return `${brand}  ${color("muted", "idle · last:")} ${color("text", last.slug)} ${color("success", "✓ done")} ${color("muted", roundText(last))}`;
+	}
+	const tint = (line: string) => {
+		const token = statuslineTintToken(active[0]);
+		return token ? bg(token, line) : line;
+	};
 	const build = (leadLabelMax: number, chipLabelMax: number, chipCount: number, includeDone: boolean, runningTailLevel: number) => {
 		const segments = [renderLeadTask(active[0], color, frame, leadLabelMax, runningTailLevel)];
 		for (const task of active.slice(1, chipCount + 1)) segments.push(renderTaskChip(task, color, chipLabelMax));
@@ -749,7 +846,7 @@ export function formatStatusLine(model: StatuslineTask[], opts: FormatStatusLine
 			for (const chipBudget of chipBudgets) {
 				for (let chipCount = active.length - 1; chipCount >= 0; chipCount -= 1) {
 					const line = build(leadBudget, chipBudget, chipCount, true, tailLevel);
-					if (visibleLength(line) <= maxWidth) return line;
+					if (visibleLength(line) <= maxWidth) return tint(line);
 				}
 			}
 		}
@@ -757,11 +854,11 @@ export function formatStatusLine(model: StatuslineTask[], opts: FormatStatusLine
 	for (const tailLevel of [2, 1, 0]) {
 		for (const leadBudget of leadBudgets) {
 			const line = build(leadBudget, 0, 0, false, tailLevel);
-			if (visibleLength(line) <= maxWidth) return line;
+			if (visibleLength(line) <= maxWidth) return tint(line);
 		}
 	}
 	const fallback = `${brand}  ${renderLeadTask(active[0], color, frame, Math.max(1, maxWidth - 24), 0)}`;
-	if (visibleLength(fallback) <= maxWidth) return fallback;
+	if (visibleLength(fallback) <= maxWidth) return tint(fallback);
 	const brandOnly = color("accent", wordClip("FOREMAN", maxWidth));
 	return visibleLength(brandOnly) <= maxWidth ? brandOnly : "";
 }

@@ -118,7 +118,7 @@ type LocalDialogHandle = {
 	cancel: () => void;
 };
 
-const HANDSHAKE_PATH = join(homedir(), ".pi", "pimote", "daemon.json");
+const HANDSHAKE_PATH = join(homedir(), ".pi", "pocketpi", "daemon.json");
 const WS_OPEN = 1;
 const REMOTE_CONNECT_TIMEOUT_MS = 1_500;
 
@@ -606,7 +606,7 @@ function startRemoteDialog(questions: AskUserQuestionItem[], ctx: ExecuteContext
 	const promise = new Promise<RemoteDialogResult>((resolve) => {
 		resolveResult = resolve;
 		if (!sessionFile) {
-			settle({ type: "unavailable", reason: "No pi session file is available for Pimote routing." });
+			settle({ type: "unavailable", reason: "No pi session file is available for Pocket Pi routing." });
 			return;
 		}
 		if (signal?.aborted) {
@@ -636,7 +636,7 @@ function startRemoteDialog(questions: AskUserQuestionItem[], ctx: ExecuteContext
 				connectTimer = undefined;
 			},
 		}).catch((err) => {
-			settle({ type: "unavailable", reason: `Pimote remote setup failed: ${errMsg(err)}` });
+			settle({ type: "unavailable", reason: `Pocket Pi remote setup failed: ${errMsg(err)}` });
 		});
 	});
 
@@ -663,7 +663,7 @@ async function connectRemoteDialog(args: {
 	try {
 		handshake = await readHandshake();
 	} catch (err) {
-		args.settle({ type: "unavailable", reason: `Pimote daemon handshake unavailable: ${errMsg(err)}` });
+		args.settle({ type: "unavailable", reason: `Pocket Pi daemon handshake unavailable: ${errMsg(err)}` });
 		return;
 	}
 	if (args.isSettled()) return;
@@ -678,7 +678,7 @@ async function connectRemoteDialog(args: {
 	try {
 		ws = new WebSocketCtor(`ws://127.0.0.1:${handshake.port}/?token=${encodeURIComponent(handshake.token)}`);
 	} catch (err) {
-		args.settle({ type: "unavailable", reason: `Pimote daemon connection failed: ${errMsg(err)}` });
+		args.settle({ type: "unavailable", reason: `Pocket Pi daemon connection failed: ${errMsg(err)}` });
 		return;
 	}
 	if (args.isSettled()) {
@@ -693,7 +693,7 @@ async function connectRemoteDialog(args: {
 	args.setSocket(ws);
 	args.setConnectTimer(
 		setTimeout(() => {
-			args.settle({ type: "unavailable", reason: "Pimote daemon connection timed out." });
+			args.settle({ type: "unavailable", reason: "Pocket Pi daemon connection timed out." });
 		}, REMOTE_CONNECT_TIMEOUT_MS),
 	);
 
@@ -704,7 +704,7 @@ async function connectRemoteDialog(args: {
 			ws.send(JSON.stringify({ op: "ext_register", role: "ask", sessionFile: args.sessionFile }));
 			ws.send(JSON.stringify({ op: "ask_start", sessionFile: args.sessionFile, requestId: args.requestId, questions: args.questions }));
 		} catch (err) {
-			args.settle({ type: "unavailable", reason: `Pimote remote question send failed: ${errMsg(err)}` });
+			args.settle({ type: "unavailable", reason: `Pocket Pi remote question send failed: ${errMsg(err)}` });
 		}
 	});
 	onSocket(ws, "message", (ev) => {
@@ -723,15 +723,15 @@ async function connectRemoteDialog(args: {
 			return;
 		}
 		if (frame.op === "ask_dismiss") {
-			const reason = typeof frame.reason === "string" && frame.reason ? frame.reason : "Dismissed from Pimote.";
+			const reason = typeof frame.reason === "string" && frame.reason ? frame.reason : "Dismissed from Pocket Pi.";
 			args.settle(remoteDismissIsUnavailable(reason) ? { type: "unavailable", reason } : { type: "dismissed", reason });
 		}
 	});
 	onSocket(ws, "close", () => {
-		args.settle({ type: "unavailable", reason: "Pimote daemon connection closed before an answer." });
+		args.settle({ type: "unavailable", reason: "Pocket Pi daemon connection closed before an answer." });
 	});
 	onSocket(ws, "error", () => {
-		args.settle({ type: "unavailable", reason: "Pimote daemon connection failed before an answer." });
+		args.settle({ type: "unavailable", reason: "Pocket Pi daemon connection failed before an answer." });
 	});
 }
 
@@ -781,13 +781,13 @@ function remoteSelectedLabels(value: unknown): string[] {
 
 function remoteDismissIsUnavailable(reason: string): boolean {
 	const lower = reason.toLowerCase();
-	return lower.includes("no pimote client") || lower.includes("all pimote clients") || lower.includes("unavailable");
+	return lower.includes("no pocket pi client") || lower.includes("all pocket pi clients") || lower.includes("unavailable");
 }
 
 async function readHandshake(): Promise<{ port: number; token: string }> {
 	const parsed = JSON.parse(await readFile(HANDSHAKE_PATH, "utf8")) as { port?: unknown; token?: unknown };
 	if (typeof parsed.port !== "number" || !Number.isInteger(parsed.port) || typeof parsed.token !== "string" || !parsed.token) {
-		throw new Error("invalid Pimote daemon handshake");
+		throw new Error("invalid Pocket Pi daemon handshake");
 	}
 	return { port: parsed.port, token: parsed.token };
 }

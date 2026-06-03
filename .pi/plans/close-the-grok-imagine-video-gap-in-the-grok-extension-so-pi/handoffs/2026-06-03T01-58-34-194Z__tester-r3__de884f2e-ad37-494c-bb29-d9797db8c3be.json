@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-03T01:58:34.194Z",
+  "role": "tester",
+  "round": 3,
+  "sessionId": "de884f2e-ad37-494c-bb29-d9797db8c3be",
+  "successState": "success",
+  "summary": "I'll verify the actual implementation against the task requirements.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll verify the actual implementation against the task requirements.\nThe client changes look correct. Let me check the new tool, package.json, README, and test.\nNow let me verify the style matches the existing videogen and check the remaining files.\nThe new tool matches the videogen style well. Now the package.json, README, and test.\nTest is thorough. Now the README.\nAll README sections are present and correct. Let me verify TS compiles via jiti quickly and confirm no extend fields exist.\nNo extend tool, no forbidden fields. Let me run the test to confirm it loads (will SKIP if unauthorised).\nThe harness is actually authorised and the live test is running real generations. Let me see the rest.\nEverything verified. The implementation fully satisfies the task:\n\n- **Default model fix**: `GROK_VIDEO_MODEL = \"grok-imagine-video\"` (was 1.5-preview) at imagineClient.ts:20.\n- **Optional per-call model**: added `model?: string` to `GenerateVideoOptions`, threaded via `opts.model ?? GROK_VIDEO_MODEL`; `VideoGenerationResult.model` widened to `string`.\n- **reference_to_video**: `generateReferenceVideo` validates prompt + 2–7 images with exact error messages, sends `reference_images: [{url}]` objects (not bare strings, not `images`), reuses a shared `createPollDownload` helper, sets `referenceCount`.\n- **New tool** `grok-video-reference` mirrors videogen's TypeBox/error/render patterns with `as any` returns; registered in package.json after videogen.\n- **README**: tool-table row, reference→video HTTP subsection, model note, params block, env override default updated, \"six tools\" packaging tree.\n- **Test**: imports + runs a real reference→video smoke (2 refs, 480p, duration 6), loads the new tool module, asserts mp4 on disk.\n- **No extend tool / no extend/video/asset fields**; subscription-proxy auth with no `x-grok-model-override` for Imagine preserved.\n\nThe live test actually ran authorised and the reference→video produced a real mp4 — confirming the wire shape is correct, not faked.\n\nVERDICT: PASS"
+}

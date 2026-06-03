@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-06-03T02:26:25.926Z",
+  "role": "developer",
+  "round": 2,
+  "sessionId": "cc52f636-7f6f-44ed-bb2a-f94a41a0b435",
+  "summary": "Fixed the reference-to-video request body and README example to use resolution_name, matching the verified Grok REST surface.",
+  "filesChanged": [
+    "extensions/grok/_shared/imagineClient.ts - reference-to-video now sends resolution_name",
+    "extensions/grok/README.md - reference-to-video REST example updated to resolution_name"
+  ],
+  "howToVerify": "bash extensions/grok/test/imagine_test.sh",
+  "raw": "## Completed\nFixed the reviewer-blocking reference→video wire mismatch: `generateReferenceVideo` now sends `resolution_name` instead of ignored `resolution`, and the README reference→video REST example matches.\n\n## Files Changed\n- `extensions/grok/_shared/imagineClient.ts` - reference→video request body uses `resolution_name`.\n- `extensions/grok/README.md` - reference→video example uses `resolution_name`.\n\n## How To Verify\n`bash extensions/grok/test/imagine_test.sh`\n\n## Notes\nSelf-check: read back the edited sections and confirmed reference→video now uses `resolution_name`.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n---DEV-JSON---\n{\n  \"summary\": \"Fixed the reference-to-video request body and README example to use resolution_name, matching the verified Grok REST surface.\",\n  \"filesChanged\": [\n    \"extensions/grok/_shared/imagineClient.ts - reference-to-video now sends resolution_name\",\n    \"extensions/grok/README.md - reference-to-video REST example updated to resolution_name\"\n  ],\n  \"howToVerify\": \"bash extensions/grok/test/imagine_test.sh\"\n}\n---END-DEV-JSON---"
+}

@@ -10,6 +10,7 @@ backend the CLI uses:
 | `grok-image-gen` | Generate one or more images, save them to disk, and return inline images. |
 | `grok-image-edit` | Edit 1–3 images from local paths/data URIs/URLs, save outputs, and return inline images. |
 | `grok-video-gen` | Generate text→video or image→video, poll progress, download the mp4, and return its path/source URL. |
+| `grok-video-reference` | Generate a video from 2–7 reference images + a prompt for strong consistency; polls, downloads the mp4, returns path/source URL. |
 
 All subscription-backed tools work whenever **Grok is authorised** — i.e. you've
 run `grok login` — with no pay-as-you-go API credits required. Auth is reused
@@ -95,6 +96,31 @@ POST https://cli-chat-proxy.grok.com/v1/videos/generations
 }
 ```
 
+For image→video, `image` must be an object `{ "url": "..." }` (not a bare
+string). Local input image paths are read and converted to `data:image/...;base64,...`.
+
+### Imagine reference→video (`grok-video-reference`)
+
+```http
+POST https://cli-chat-proxy.grok.com/v1/videos/generations
+
+{
+  "model": "grok-imagine-video",
+  "prompt": "...",
+  "reference_images": [
+    { "url": "data:image/jpeg;base64,..." },
+    { "url": "https://..." }
+  ],
+  "duration": 6,
+  "aspect_ratio": "16:9",
+  "resolution_name": "480p"
+}
+```
+
+Reference→video requires 2–7 references. The legacy `images` field is rejected
+(use `reference_images`), and each entry must be an object `{ "url": "..." }`,
+not a bare string. Local paths are converted to data URIs before the request.
+
 The create call returns `{ "request_id": "..." }`. The client polls:
 
 ```http
@@ -103,6 +129,14 @@ GET https://cli-chat-proxy.grok.com/v1/videos/{request_id}
 
 until `status` is `done`, then downloads `video.url` (mp4) to disk. `failed` or
 `expired` statuses are surfaced as errors.
+
+#### Model note
+
+The default video model is `grok-imagine-video`, the bare alias the official CLI
+sends; it supports text→video, image→video, and reference→video. The
+`grok-imagine-video-1.5-preview` model is image→video only (it 400s on text and
+reference requests) and can be pinned per-call via the client `model` option or
+`GROK_DEFAULT_VIDEO_MODEL`.
 
 > Important: Search adds `x-grok-model-override: grok-4.20-multi-agent` via the
 > shared auth helper's extra headers. Imagine image/video requests intentionally
@@ -159,6 +193,14 @@ Imagine is subscription-proxy first and requires a valid `grok login` session.
 - `resolution?` — `"480p"` or `"720p"`
 - `output?` — optional mp4 filename; basename only is used and sanitized
 
+**`grok-video-reference`**
+- `prompt` (required)
+- `images` (required) — 2–7 local paths/data URIs/URLs for reference→video
+- `duration?` — 1–15 seconds (6 or 10 recommended)
+- `aspect_ratio?`
+- `resolution?` — `"480p"` or `"720p"`
+- `output?` — optional mp4 filename; basename only is used and sanitized
+
 ## Output files
 
 Generated assets are saved under:
@@ -189,6 +231,8 @@ replaced. For multi-image outputs, `-1`, `-2`, ... are appended.
 | `XAI_API_BASE_URL` | Override the public API base URL used by search fallback |
 | `GROK_SEARCH_MAX_ATTEMPTS` / `GROK_SEARCH_BACKOFF_MS` | Search retry tuning |
 | `GROK_SEARCH_DEADLINE_MS` | Hard wall-clock cap for a whole search (default 90000; 0 disables) |
+| `GROK_DEFAULT_IMAGE_MODEL` | Default model for `grok-image-gen` / `grok-image-edit` (default `grok-imagine-image-quality`) |
+| `GROK_DEFAULT_VIDEO_MODEL` | Default model for `grok-video-gen` / `grok-video-reference` (default `grok-imagine-video`) |
 | `PI_IMAGINE_OUTPUT_DIR` | Directory for generated images/videos (default `~/.pi/.generated`) |
 | `PI_IMAGINE_MAX_ATTEMPTS` / `PI_IMAGINE_BACKOFF_MS` | Imagine 429/5xx retry tuning (default 4 attempts, 1500ms base) |
 | `PI_IMAGINE_VIDEO_DEADLINE_MS` | Video polling deadline (default 300000ms) |
@@ -196,11 +240,11 @@ replaced. For multi-image outputs, `-1`, `-2`, ... are appended.
 
 ## Packaging
 
-This domain registers five tools through the package manifest:
+This domain registers six tools through the package manifest:
 
 ```text
 grok/
-  package.json              # pi.extensions lists all five index.ts entries
+  package.json              # pi.extensions lists all six index.ts entries
   _shared/grokAuth.ts       # shared CLI auth envelope
   _shared/grokClient.ts     # search client (public API preserved)
   _shared/imagineClient.ts  # image/video client + saving/downloading helpers
@@ -209,13 +253,14 @@ grok/
   imagegen/index.ts         # grok-image-gen
   imageedit/index.ts        # grok-image-edit
   videogen/index.ts         # grok-video-gen
+  videoreference/index.ts   # grok-video-reference
   test/
 ```
 
 ## Tests
 
 ```bash
-bash extensions/grok/test/imagine_test.sh  # live image + video smoke; skips if unauthorised
+bash extensions/grok/test/imagine_test.sh  # live image + video + reference video smoke; skips if unauthorised
 bash extensions/grok/test/search_test.sh   # live web + X search; skips if unauthorised
 ```
 

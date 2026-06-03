@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-03T02:12:42.015Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "39077ad4-2d3a-4845-86d0-bdc851a1fbd9",
+  "successState": "success",
+  "summary": "I'll investigate the actual files in the grok extension to verify the task was completed correctly.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll investigate the actual files in the grok extension to verify the task was completed correctly.\nThe client looks correct. Now let me check the new tool, package.json, README, and tests.\nThe new tool mirrors videogen exactly and package.json is updated. Now let me verify the README and test file.\nThe implementation is thorough. Notably, the verify gate command ran **foreman** tests, not the grok tests — so let me independently confirm the grok code loads and there's no extend tool.\nAll requirements verified. The live smoke test passed end-to-end against the real proxy, including reference→video.\n\n**Verification summary:**\n- ✅ Default model fixed: `GROK_VIDEO_MODEL = ... ?? \"grok-imagine-video\"` (imagineClient.ts:20)\n- ✅ Optional `model?` override threaded through `generateVideo`; `VideoGenerationResult.model` widened to `string`\n- ✅ `GenerateReferenceVideoOptions` + `generateReferenceVideo` added with prompt + 2–7 image validation, `reference_images: [{url}]` wire shape, `referenceCount` set\n- ✅ Shared `createPollDownload` helper factored to avoid duplication\n- ✅ New `videoreference/index.ts` mirrors videogen exactly (TypeBox, GrokAuthError, onUpdate, renderCall/renderResult, `as any` patterns)\n- ✅ package.json adds `videoreference/index.ts`\n- ✅ README: tool table row, reference→video HTTP section, model note, parameters block, env default `grok-imagine-video`, \"six tools\" packaging tree\n- ✅ Test imports `generateReferenceVideo` + the new tool module, adds a 480p/dur-6/2-ref smoke with mp4 assertions and SKIP-on-unauth\n- ✅ No extend tool added; no `video:{url}`/`extends_asset_id` fields invented (only prompt-doc mentions extend)\n- ✅ Subscription-proxy auth preserved (no x-grok-model-override for Imagine)\n- ✅ Live test actually generated a real reference→video mp4 from the backend\n\nThe verify gate ran foreman tests (unrelated), but the grok work itself is genuinely complete and proven live.\n\nVERDICT: PASS"
+}

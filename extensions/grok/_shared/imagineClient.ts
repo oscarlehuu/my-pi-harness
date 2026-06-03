@@ -16,8 +16,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { type GrokAuth, buildAuthHeaders, resolveGrokAuth } from "./grokAuth.ts";
 
-export const GROK_IMAGE_MODEL = "grok-imagine-image-quality";
-export const GROK_VIDEO_MODEL = "grok-imagine-video";
+export const GROK_IMAGE_MODEL = process.env.GROK_DEFAULT_IMAGE_MODEL ?? "grok-imagine-image-quality";
+export const GROK_VIDEO_MODEL = process.env.GROK_DEFAULT_VIDEO_MODEL ?? "grok-imagine-video";
 
 const DEFAULT_IMAGE_PREFIX = "grok-image";
 const DEFAULT_VIDEO_PREFIX = "grok-video";
@@ -71,8 +71,9 @@ export interface VideoGenerationResult {
 	url: string;
 	duration?: number;
 	status: "done";
-	model: typeof GROK_VIDEO_MODEL;
+	model: string;
 	mode: GrokAuth["mode"];
+	referenceCount?: number;
 }
 
 export interface GenerateVideoOptions {
@@ -81,8 +82,22 @@ export interface GenerateVideoOptions {
 	duration?: number;
 	aspectRatio?: string;
 	resolution?: "480p" | "720p" | string;
+	model?: string;
 	output?: string;
 	/** Base directory for resolving a relative local input image path. */
+	cwd?: string;
+	signal?: AbortSignal;
+	onProgress?: (progress: ImagineProgress) => void;
+}
+
+export interface GenerateReferenceVideoOptions {
+	prompt: string;
+	images: string[];
+	duration?: number;
+	aspectRatio?: string;
+	resolution?: "480p" | "720p" | string;
+	model?: string;
+	output?: string;
 	cwd?: string;
 	signal?: AbortSignal;
 	onProgress?: (progress: ImagineProgress) => void;
@@ -240,9 +255,10 @@ export async function generateVideo(opts: GenerateVideoOptions): Promise<VideoGe
 	const prompt = opts.prompt?.trim();
 	if (!prompt) throw new Error("prompt is required");
 	const auth = resolveGrokAuth("subscription");
+	const model = opts.model ?? GROK_VIDEO_MODEL;
 	const image = opts.image ? { url: await resolveImageRef(opts.image, opts.cwd) } : undefined;
 	const body = {
-		model: GROK_VIDEO_MODEL,
+		model,
 		prompt,
 		...(opts.duration !== undefined ? { duration: normalizeDuration(opts.duration) } : {}),
 		...(opts.aspectRatio ? { aspect_ratio: opts.aspectRatio } : {}),
@@ -250,22 +266,55 @@ export async function generateVideo(opts: GenerateVideoOptions): Promise<VideoGe
 		...(image ? { image } : {}),
 	};
 
+	const video = await createPollDownload(auth, body, opts.output, opts.signal, opts.onProgress);
+	return { ...video, model, mode: auth.mode };
+}
+
+export async function generateReferenceVideo(opts: GenerateReferenceVideoOptions): Promise<VideoGenerationResult> {
+	const prompt = opts.prompt?.trim();
+	if (!prompt) throw new Error("prompt is required");
+	if (!Array.isArray(opts.images) || opts.images.length < 2) throw new Error("reference_to_video requires at least 2 reference images");
+	if (opts.images.length > 7) throw new Error("reference_to_video accepts at most 7 reference images");
+
+	const auth = resolveGrokAuth("subscription");
+	const model = opts.model ?? GROK_VIDEO_MODEL;
+	const resolved = await Promise.all(opts.images.map((ref) => resolveImageRef(ref, opts.cwd)));
+	const body = {
+		model,
+		prompt,
+		reference_images: resolved.map((url) => ({ url })),
+		...(opts.duration !== undefined ? { duration: normalizeDuration(opts.duration) } : {}),
+		...(opts.aspectRatio ? { aspect_ratio: opts.aspectRatio } : {}),
+		...(opts.resolution ? { resolution_name: opts.resolution } : {}),
+	};
+
+	const video = await createPollDownload(auth, body, opts.output, opts.signal, opts.onProgress);
+	return { ...video, model, mode: auth.mode, referenceCount: resolved.length };
+}
+
+async function createPollDownload(
+	auth: GrokAuth,
+	body: Record<string, unknown>,
+	output?: string,
+	signal?: AbortSignal,
+	onProgress?: (progress: ImagineProgress) => void,
+): Promise<Omit<VideoGenerationResult, "model" | "mode" | "referenceCount">> {
 	const created = await fetchJsonWithRetry<VideoCreateResponse>(auth, "/videos/generations", {
 		method: "POST",
 		body,
-		signal: opts.signal,
-		onProgress: opts.onProgress,
+		signal,
+		onProgress,
 	});
 	const requestId = created.request_id;
 	if (!requestId) throw new Error(`Grok video response missing request_id: ${JSON.stringify(created).slice(0, 400)}`);
 
-	const poll = await pollVideo(auth, requestId, opts.signal, opts.onProgress);
+	const poll = await pollVideo(auth, requestId, signal, onProgress);
 	const url = poll.video?.url;
 	if (!url) throw new Error(`Grok video completed without a video URL: ${JSON.stringify(poll).slice(0, 400)}`);
 
-	opts.onProgress?.({ phase: "downloading", requestId, status: "done", progress: 100 });
-	const dest = path.join(outputDir(), sanitizeOutputName(opts.output || defaultName(DEFAULT_VIDEO_PREFIX, "mp4"), "mp4"));
-	await downloadToFile(url, dest, opts.signal);
+	onProgress?.({ phase: "downloading", requestId, status: "done", progress: 100 });
+	const dest = path.join(outputDir(), sanitizeOutputName(output || defaultName(DEFAULT_VIDEO_PREFIX, "mp4"), "mp4"));
+	await downloadToFile(url, dest, signal);
 
 	return {
 		requestId,
@@ -273,8 +322,6 @@ export async function generateVideo(opts: GenerateVideoOptions): Promise<VideoGe
 		url,
 		duration: poll.video?.duration,
 		status: "done",
-		model: GROK_VIDEO_MODEL,
-		mode: auth.mode,
 	};
 }
 

@@ -1,0 +1,54 @@
+{
+  "summary": "Read-only Gate 1 plan to close the Grok Imagine video gap in extensions/grok: fix the broken default video model (grok-imagine-video-1.5-preview -> grok-imagine-video), add a per-call model override, add generateReferenceVideo + a new grok-video-reference tool (2-7 reference_images as {url} objects), and update package manifest, README, and the live test. No extend tool/fields. Keep subscription-proxy auth (no x-grok-model-override for Imagine). foreman.json already exists; existing gates are reflected, not overwritten.",
+  "steps": [
+    "imagineClient.ts: change GROK_VIDEO_MODEL default to 'grok-imagine-video' (env GROK_DEFAULT_VIDEO_MODEL); widen VideoGenerationResult.model from `typeof GROK_VIDEO_MODEL` to `string`; optionally add referenceCount?: number.",
+    "imagineClient.ts: add `model?: string` to GenerateVideoOptions and use (opts.model ?? GROK_VIDEO_MODEL) in generateVideo; keep image sent as image:{url}; preserve create->pollVideo->download flow.",
+    "imagineClient.ts: add GenerateReferenceVideoOptions interface + generateReferenceVideo(): trim/require prompt; validate images array length >=2 ('reference_to_video requires at least 2 reference images') and <=7 ('reference_to_video accepts at most 7 reference images'); resolveImageRef each ref via opts.cwd; build reference_images: resolved.map(url => ({url})); body {model: opts.model ?? GROK_VIDEO_MODEL, prompt, reference_images, optional normalizeDuration(duration)/aspect_ratio/resolution}; reuse same create->poll->download path (factor a private createPollDownload helper to avoid duplication); return VideoGenerationResult (set referenceCount). Keep normalizeDuration lenient (1-15); do not hard-fail on 6/10.",
+    "NEW extensions/grok/videoreference/index.ts: register tool 'grok-video-reference' mirroring videogen/imageedit exactly (TypeBox schema, GrokAuthError handling, onUpdate progress, renderCall/renderResult, details object, `as any` returns). Params: prompt (required), images Type.Array(Type.String(),{minItems:2,maxItems:7}), duration? (1-15), aspect_ratio?, resolution? Union(480p,720p), output?. execute validates prompt/images then calls generateReferenceVideo({...,aspectRatio:params.aspect_ratio,cwd:ctx.cwd,signal,onProgress}); details {prompt,path,url,requestId,duration,mode,model,referenceCount}; returns {content:[{type:'text',text:`Video saved to ${path}\\nSource URL: ${url}`}], details}. renderResult mirrors videogen success line with Nrefs.",
+    "package.json: append 'videoreference/index.ts' to pi.extensions after 'videogen/index.ts'.",
+    "README.md: add grok-video-reference table row; add 'Imagine reference->video' HTTP subsection with verified reference_images:[{url},...] body + notes (2-7 refs, legacy `images` rejected, each entry is {url} object, local paths -> data URIs); add Model note (default grok-imagine-video supports text/image/reference; 1.5-preview is image-to-video only, pin per-call via model option/GROK_DEFAULT_VIDEO_MODEL); add grok-video-reference tool-parameters block; fix env table GROK_DEFAULT_VIDEO_MODEL default to grok-imagine-video; bump 'five tools'->'six tools' and add videoreference/index.ts to packaging tree; keep the x-grok-model-override note.",
+    "test/imagine_live_test.mjs: import generateReferenceVideo alongside generateVideo; add videoreference/index.ts to the toolPaths loop; after the text->video step add a cheap reference->video smoke (two tiny refs, duration 6, resolution 480p, output 'acceptance-reference-video.mp4') asserting mp4 lands in PI_IMAGINE_OUTPUT_DIR / exists / isMp4; keep graceful SKIP-on-unauth.",
+    "Verify by loading via jiti (no build) and running `bash extensions/grok/test/imagine_test.sh` (SKIPs without grok login); confirm legacy controller-fallback grep checks pass."
+  ],
+  "filesLikely": [
+    "extensions/grok/_shared/imagineClient.ts",
+    "extensions/grok/videoreference/index.ts",
+    "extensions/grok/package.json",
+    "extensions/grok/README.md",
+    "extensions/grok/test/imagine_live_test.mjs"
+  ],
+  "risks": [
+    "Live test gates on auth: imagine_test.sh SKIPs (exit 0) unless a valid `grok login` subscription token exists, so reference->video isn't truly exercised in unauthenticated CI; loader/syntax regressions are still caught via the toolPaths import loop.",
+    "Type change: widening VideoGenerationResult.model from `typeof GROK_VIDEO_MODEL` to `string` and adding referenceCount must not break existing consumers (videogen reads result.model/duration only) — verify no other reader narrows on the literal type.",
+    "Wire-shape correctness is critical: reference_images MUST be array of {url} objects (bare strings 422; legacy `images` field 400), min 2 / max 7 (N=8 -> 400). Server silently ignores unknown fields, so do NOT add extend/video/asset-UUID fields.",
+    "Model semantics: grok-imagine-video-1.5-preview 400s on text and reference modes; only the bare grok-imagine-video alias supports all three — default must be the bare alias, override is opt-in only.",
+    "Keep generateVideo backward compatible: grok-video-gen surface unchanged except now defaulting to the working model; duration stays lenient (normalizeDuration 1-15), server enforces 6/10 per mode.",
+    ".pi/foreman.json already exists; its `verify` command runs the FOREMAN test suite (extensions/foreman/...), not the grok imagine test. Plan reflects existing gates and does not overwrite them; task-specific verification (imagine_test.sh + legacy grep checks) is run manually, not wired as a foreman gate.",
+    "jiti no-build constraint: must reuse the exact `as any` return patterns and TypeBox primitives from videogen/imageedit or the .ts will fail to load."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [],
+    "services": []
+  }
+}

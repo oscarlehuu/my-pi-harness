@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-06-03T01:56:33.729Z",
+  "role": "developer",
+  "round": 3,
+  "sessionId": "851ef8eb-428e-4185-878a-60db0e6bbb3f",
+  "summary": "Fixed Grok Imagine video defaults and added reference-to-video support via a new grok-video-reference tool, with docs and live smoke test coverage updated.",
+  "filesChanged": [
+    "extensions/grok/_shared/imagineClient.ts - fixed default model, added video model override and generateReferenceVideo",
+    "extensions/grok/videoreference/index.ts - new grok-video-reference tool",
+    "extensions/grok/package.json - registered new tool",
+    "extensions/grok/README.md - documented reference-to-video, model behavior, params, and packaging",
+    "extensions/grok/test/imagine_live_test.mjs - added reference-to-video smoke coverage",
+    "extensions/grok/test/imagine_test.sh - updated test description"
+  ],
+  "howToVerify": "bash extensions/grok/test/imagine_test.sh",
+  "raw": "## Completed\nImplemented the Grok Imagine video gap fix: default video model now uses the working bare `grok-imagine-video`, added client support for reference→video, registered a new `grok-video-reference` pi tool, and updated docs/tests.\n\n## Files Changed\n- `extensions/grok/_shared/imagineClient.ts` - fixed default model, added per-call video model override, added `generateReferenceVideo`.\n- `extensions/grok/videoreference/index.ts` - new `grok-video-reference` tool.\n- `extensions/grok/package.json` - registers new tool.\n- `extensions/grok/README.md` - documents reference→video, model notes, params, packaging.\n- `extensions/grok/test/imagine_live_test.mjs` - imports new tool/client and adds reference→video smoke.\n- `extensions/grok/test/imagine_test.sh` - updated test description.\n\n## How To Verify\n`bash extensions/grok/test/imagine_test.sh`\n\n## Notes\nSelf-checks passed: jiti loaded the updated Imagine client + tool modules, default model resolved to `grok-imagine-video`, `git diff --check` clean, and unauthorised test path skips cleanly.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n\n---DEV-JSON---\n{\n  \"summary\": \"Fixed Grok Imagine video defaults and added reference-to-video support via a new grok-video-reference tool, with docs and live smoke test coverage updated.\",\n  \"filesChanged\": [\n    \"extensions/grok/_shared/imagineClient.ts - fixed default model, added video model override and generateReferenceVideo\",\n    \"extensions/grok/videoreference/index.ts - new grok-video-reference tool\",\n    \"extensions/grok/package.json - registered new tool\",\n    \"extensions/grok/README.md - documented reference-to-video, model behavior, params, and packaging\",\n    \"extensions/grok/test/imagine_live_test.mjs - added reference-to-video smoke coverage\",\n    \"extensions/grok/test/imagine_test.sh - updated test description\"\n  ],\n  \"howToVerify\": \"bash extensions/grok/test/imagine_test.sh\"\n}\n---END-DEV-JSON---"
+}

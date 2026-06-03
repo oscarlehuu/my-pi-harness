@@ -4,6 +4,6 @@
   "private": true,
   "description": "Grok-powered search, image, and video tools for pi via xAI's subscription-backed CLI proxy.",
   "pi": {
-    "extensions": ["websearch/index.ts", "xsearch/index.ts", "imagegen/index.ts", "imageedit/index.ts", "videogen/index.ts"]
+    "extensions": ["websearch/index.ts", "xsearch/index.ts", "imagegen/index.ts", "imageedit/index.ts", "videogen/index.ts", "videoreference/index.ts"]
   }
 }

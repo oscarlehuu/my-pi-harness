@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Acceptance test for the Grok Imagine extensions (image + video).
+# Acceptance test for the Grok Imagine extensions (image + video + reference video).
 #
-# Runs live image generation and short text→video generation against the
-# subscription-backed Grok proxy. Exit 0 = pass (or cleanly skipped when Grok is
+# Runs live image generation plus short text→video and reference→video generation
+# against the subscription-backed Grok proxy. Exit 0 = pass (or cleanly skipped when Grok is
 # not authorised); non-zero = fail.
 #
 #   bash extensions/grok/test/imagine_test.sh

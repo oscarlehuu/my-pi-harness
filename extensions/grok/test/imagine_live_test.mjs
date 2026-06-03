@@ -2,9 +2,9 @@
 /**
  * Live smoke test for the Grok Imagine client.
  *
- * Loads imagineClient.ts and the three tool modules via jiti (same loader pi
- * uses; no build step), then runs a real image generation and a real short
- * text→video generation against cli-chat-proxy.grok.com/v1. Skips gracefully
+ * Loads imagineClient.ts and the four Imagine tool modules via jiti (same loader
+ * pi uses; no build step), then runs real image generation plus short text→video
+ * and reference→video generations against cli-chat-proxy.grok.com/v1. Skips gracefully
  * (exit 0) when no valid `grok login` subscription token is available.
  */
 
@@ -22,6 +22,7 @@ const toolPaths = [
 	path.resolve(__dirname, "../imagegen/index.ts"),
 	path.resolve(__dirname, "../imageedit/index.ts"),
 	path.resolve(__dirname, "../videogen/index.ts"),
+	path.resolve(__dirname, "../videoreference/index.ts"),
 ];
 
 // Resolve jiti from the installed pi package (same engine pi loads extensions with).
@@ -107,24 +108,27 @@ async function main() {
 	// having to spin up a full pi runtime.
 	for (const toolPath of toolPaths) await jiti.import(toolPath);
 
-	const { generateImage, generateVideo, GROK_IMAGE_MODEL, GROK_VIDEO_MODEL } = await jiti.import(clientPath);
+	const { generateImage, generateVideo, generateReferenceVideo, GROK_IMAGE_MODEL, GROK_VIDEO_MODEL } = await jiti.import(clientPath);
 	console.log(`Using models: ${GROK_IMAGE_MODEL}, ${GROK_VIDEO_MODEL}`);
 	console.log(`Output dir: ${tempDir}\n`);
 
-	console.log("image generation: 1 tiny acceptance image");
+	console.log("image generation: 2 tiny acceptance reference images");
 	const image = await generateImage({
 		prompt: "A simple red circle icon centered on a plain white background. No text.",
-		n: 1,
+		n: 2,
 		resolution: "1k",
 		output: "acceptance-image",
 	});
-	assert(image.images.length === 1, "image generation returned exactly one image");
-	const imagePath = image.images[0].path;
-	assert(imagePath.startsWith(tempDir + path.sep), "image landed in PI_IMAGINE_OUTPUT_DIR");
-	assert(fs.existsSync(imagePath), "image file exists on disk");
-	const imageBytes = fs.readFileSync(imagePath);
-	assert(isValidImage(imageBytes), "image decodes as JPEG or PNG by magic bytes");
-	console.log(`  saved: ${imagePath}\n`);
+	assert(image.images.length === 2, "image generation returned exactly two images");
+	const referenceImagePaths = image.images.map((img) => img.path);
+	for (const imagePath of referenceImagePaths) {
+		assert(imagePath.startsWith(tempDir + path.sep), "image landed in PI_IMAGINE_OUTPUT_DIR");
+		assert(fs.existsSync(imagePath), "image file exists on disk");
+		const imageBytes = fs.readFileSync(imagePath);
+		assert(isValidImage(imageBytes), "image decodes as JPEG or PNG by magic bytes");
+		console.log(`  saved: ${imagePath}`);
+	}
+	console.log();
 
 	console.log("text→video generation: short 480p acceptance mp4");
 	const video = await generateVideo({
@@ -143,7 +147,25 @@ async function main() {
 	console.log(`  saved: ${video.path}`);
 	console.log(`  source: ${video.url}\n`);
 
-	console.log("PASS: Grok Imagine image + video work via the subscription proxy.");
+	console.log("reference→video generation: 2 refs, short 480p acceptance mp4");
+	const referenceVideo = await generateReferenceVideo({
+		prompt: "Keep the simple red circle icon consistent while it gently bounces on a plain white background. No text.",
+		images: referenceImagePaths,
+		duration: 6,
+		resolution: "480p",
+		output: "acceptance-reference-video.mp4",
+		onProgress: (p) => {
+			if (p.phase === "polling") console.log(`  status: ${p.status}${typeof p.progress === "number" ? ` ${p.progress}%` : ""}`);
+		},
+	});
+	assert(referenceVideo.path.startsWith(tempDir + path.sep), "reference video landed in PI_IMAGINE_OUTPUT_DIR");
+	assert(fs.existsSync(referenceVideo.path), "reference video file exists on disk");
+	const referenceVideoBytes = fs.readFileSync(referenceVideo.path);
+	assert(isMp4(referenceVideoBytes), "reference video is a non-empty mp4 (ftyp header present)");
+	console.log(`  saved: ${referenceVideo.path}`);
+	console.log(`  source: ${referenceVideo.url}\n`);
+
+	console.log("PASS: Grok Imagine image + video + reference video work via the subscription proxy.");
 }
 
 main().catch((err) => {

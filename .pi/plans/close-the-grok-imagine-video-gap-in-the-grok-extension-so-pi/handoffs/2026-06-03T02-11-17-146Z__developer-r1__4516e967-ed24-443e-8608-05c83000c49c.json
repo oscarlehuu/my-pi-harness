@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-06-03T02:11:17.146Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "4516e967-ed24-443e-8608-05c83000c49c",
+  "summary": "(no structured summary)",
+  "raw": "Gate 2 ship approval needed.\n\nDoD rationale:\n- Gate 1 plan approved\n- Verify command passed\n- Tester verdict: SUCCESS\n- Reviewer verdict: APPROVE\n- No pre-ship command gates declared\n- Only founder sign-off remains\n\nReply with:\n- `Approve` — I’ll finalize via Foreman\n- `Revise: <feedback>` — I’ll send it back through Foreman"
+}

@@ -741,11 +741,13 @@ function livenessAlarm(task: StatuslineTask): LivenessAlarm {
 	return "healthy";
 }
 
-function statuslineTintToken(task: StatuslineTask): "warning" | "error" | undefined {
+// Background tint tokens MUST be real theme bg keys (theme.bg throws "Unknown theme background
+// color" otherwise). The theme registers *Bg keys only; "warning"/"error" are foreground-only.
+function statuslineTintToken(task: StatuslineTask): "toolPendingBg" | "toolErrorBg" | undefined {
 	if (!isStatuslineLive(task) || task.state === "awaiting_ship") return undefined;
 	const alarm = livenessAlarm(task);
-	if (alarm === "stuck") return "error";
-	if (alarm === "stalling") return "warning";
+	if (alarm === "stuck") return "toolErrorBg";
+	if (alarm === "stalling") return "toolPendingBg";
 	return undefined;
 }
 

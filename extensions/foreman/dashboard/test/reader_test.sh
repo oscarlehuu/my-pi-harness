@@ -369,14 +369,19 @@ try {
     });
     return { line, tokens };
   };
+  // Tint tokens must be REAL theme background keys (theme.bg throws on unknown keys); the theme
+  // exposes *Bg keys only, so assert those exact keys here to prevent regressing the crash.
+  const VALID_BG_TOKENS = new Set(["selectedBg", "userMessageBg", "customMessageBg", "toolPendingBg", "toolSuccessBg", "toolErrorBg", "pageBg", "cardBg", "infoBg"]);
   assert.deepEqual(formatWithBg(59999).tokens, [], "healthy movement under 60s does not tint the bar");
   const stalling = formatWithBg(60000);
-  assert.deepEqual(stalling.tokens, ["warning"], "movement at 60s tints the whole bar warning");
-  assert.ok(stalling.line.startsWith("<bg:warning>FOREMAN"), "warning tint wraps the whole FOREMAN band");
+  assert.deepEqual(stalling.tokens, ["toolPendingBg"], "movement at 60s tints the whole bar with a real pending-bg token");
+  assert.ok(stalling.tokens.every((t) => VALID_BG_TOKENS.has(t)), "stalling tint token is a real theme bg key");
+  assert.ok(stalling.line.startsWith("<bg:toolPendingBg>FOREMAN"), "warning tint wraps the whole FOREMAN band");
   assert.ok(stalling.line.includes("⚠"), "stalling uses the warning liveness glyph");
   const stuck = formatWithBg(180000);
-  assert.deepEqual(stuck.tokens, ["error"], "movement at 180s tints the whole bar error");
-  assert.ok(stuck.line.startsWith("<bg:error>FOREMAN"), "error tint wraps the whole FOREMAN band");
+  assert.deepEqual(stuck.tokens, ["toolErrorBg"], "movement at 180s tints the whole bar with a real error-bg token");
+  assert.ok(stuck.tokens.every((t) => VALID_BG_TOKENS.has(t)), "stuck tint token is a real theme bg key");
+  assert.ok(stuck.line.startsWith("<bg:toolErrorBg>FOREMAN"), "error tint wraps the whole FOREMAN band");
   assert.ok(stuck.line.includes("✗ NO MOVEMENT"), "stuck uses the no-movement liveness text");
   const awaitingShip = formatWithBg(180000, { state: "awaiting_ship", phase: null, glyph: "gate", stage: "ship", round: 2, detail: "ship?" });
   assert.deepEqual(awaitingShip.tokens, [], "awaiting_ship is not an alarm and does not tint");

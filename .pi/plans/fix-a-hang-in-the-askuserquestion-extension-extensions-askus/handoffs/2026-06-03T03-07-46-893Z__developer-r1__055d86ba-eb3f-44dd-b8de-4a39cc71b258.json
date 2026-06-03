@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-06-03T03:07:46.893Z",
+  "role": "developer",
+  "round": 1,
+  "sessionId": "055d86ba-eb3f-44dd-b8de-4a39cc71b258",
+  "summary": "(no structured summary)",
+  "raw": "Gate 1 plan is ready, but the interactive approval UI is unavailable.\n\nApprove this plan to proceed?\n- One-line guard change in `extensions/AskUserQuestion/index.ts`\n- Match daemon replies by `requestId` only\n- Keep outbound `sessionFile` sends unchanged\n- Do not modify `logic.ts`\n- Run AskUserQuestion logic test, syntax check, Foreman verify gates, review, then commit\n\nReply with **Approve** or **Revise: <feedback>**."
+}

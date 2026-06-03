@@ -1,0 +1,47 @@
+{
+  "summary": "Fix the Pimote phone-answering hang in extensions/AskUserQuestion/index.ts by changing the connectRemoteDialog websocket 'message' guard from a combined sessionFile+requestId match to a requestId-only match. The daemon canonicalizes the sessionFile (realpathSync, e.g. /tmp -> /private/tmp) and echoes the normalized path, so the string-equality check drops legitimate ask_answer/ask_dismiss frames for TERMINAL/non-canonical sessions and the remote promise never settles. requestId is locally generated and round-tripped verbatim, making it the reliable correlation key. Single-line surgical change at index.ts:739; logic.ts and all other behavior (local/remote race, timeouts, fallbacks, sends) left intact. Verified there is exactly one correlation comparison to fix.",
+  "steps": [
+    "Read extensions/AskUserQuestion/index.ts around the connectRemoteDialog 'message' handler (line 739) to confirm the exact guard text before editing.",
+    "Replace the guard `if (frame.sessionFile !== args.sessionFile || frame.requestId !== args.requestId) return;` with `if (frame.requestId !== args.requestId) return;` at index.ts:739.",
+    "Confirm the audit result: no other correlation comparison of frame.sessionFile vs args.sessionFile exists (the sends at index.ts:724-725 ext_register/ask_start and the ext_unregister/ask_cancel sends must remain unchanged so the daemon can still route).",
+    "Do not modify logic.ts and do not alter remoteAnswerToStates, ask_answer/ask_dismiss handling, the local-TUI race, connect timeout, or unavailable/dismissed fallbacks.",
+    "Run the existing logic test: bash extensions/AskUserQuestion/test/logic_test.sh — expect it to still pass.",
+    "Run the syntactic transpile check of index.ts using the pimote-bundled typescript to confirm 0 syntax (category 1) diagnostics; a full typecheck cannot resolve @earendil-works/* at rest and is expected to be skipped.",
+    "Stage ONLY extensions/AskUserQuestion/index.ts to avoid sweeping in pre-existing unrelated working-tree changes, then proceed through the Foreman review (pre-ship judge) and commit (release action) gates."
+  ],
+  "filesLikely": [
+    "extensions/AskUserQuestion/index.ts"
+  ],
+  "risks": [
+    "The working tree already contains unrelated uncommitted changes (extensions/foreman/AGENTS.md, extensions/foreman/docs/CHARTER.md, install.sh, a .pi/plans/.../log.jsonl, and prior race-fix edits in index.ts). The 'commit' release gate could include these; the implementer should stage only extensions/AskUserQuestion/index.ts.",
+    "The legacy task verify command asserts BOTH presence of `if (frame.requestId !== args.requestId) return;` AND absence of `frame.sessionFile !== args.sessionFile`; the edit must remove the old guard line entirely (not leave it commented) or the negative grep will fail.",
+    "The transpile check depends on /Users/a1241968/Desktop/Oscar/pimote/packages/app/node_modules/typescript (confirmed present). If the pimote checkout moves or node_modules is cleaned, the syntactic check must fall back to another tsc; full typecheck still cannot resolve pi's @earendil-works/* modules (expected).",
+    "Only a syntactic transpile is validated at rest; runtime correctness of phone answering for non-canonical session paths is not exercised by logic_test.sh, so a behavioral regression in the message handler would not be caught automatically.",
+    "index.ts already shows as modified in git; ensure the diff applied is exactly the one-line guard change and does not conflict with the pre-existing edits."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [],
+    "services": []
+  }
+}

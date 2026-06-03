@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-06-03T06:58:05.537Z",
+  "role": "developer",
+  "round": 2,
+  "sessionId": "6381e1dd-dbe5-4fc8-ad83-eeccd149992f",
+  "summary": "Added install.sh symlink guards for agents and skills directories, then verified continual-learning tests still pass.",
+  "filesChanged": [
+    "install.sh - remove legacy symlinks before mkdir for agents/skills"
+  ],
+  "howToVerify": "bash extensions/continual-learning/test/cadence_test.sh && bash extensions/continual-learning/test/learn_test.sh",
+  "raw": "## Completed\nApplied the requested install hardening: `agents` and `skills` symlink targets are removed before recreating them as real directories.\n\n## Files Changed\n- `install.sh` - added symlink guards before `mkdir -p` for `$AGENT_DIR/agents` and `$AGENT_DIR/skills`.\n\n## How To Verify\n`bash extensions/continual-learning/test/cadence_test.sh && bash extensions/continual-learning/test/learn_test.sh`\n\n## Notes\nBoth test scripts pass locally.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n\n---DEV-JSON---\n{\n  \"summary\": \"Added install.sh symlink guards for agents and skills directories, then verified continual-learning tests still pass.\",\n  \"filesChanged\": [ \"install.sh - remove legacy symlinks before mkdir for agents/skills\" ],\n  \"howToVerify\": \"bash extensions/continual-learning/test/cadence_test.sh && bash extensions/continual-learning/test/learn_test.sh\"\n}\n---END-DEV-JSON---"
+}

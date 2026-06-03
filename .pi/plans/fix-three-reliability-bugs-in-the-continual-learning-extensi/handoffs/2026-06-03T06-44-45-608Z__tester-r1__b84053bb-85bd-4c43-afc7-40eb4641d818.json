@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-03T06:44:45.608Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "b84053bb-85bd-4c43-afc7-40eb4641d818",
+  "successState": "success",
+  "summary": "I'll investigate the continual-learning extension to verify the three fixes.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll investigate the continual-learning extension to verify the three fixes.\nlearn.ts looks correct. Let me check memory.ts's refreshIndex, index.ts, cadence.ts, and the tests.\nindex.ts looks correct. Now cadence.ts and the tests.\ncadence.ts: DEFAULT_MIN_MINUTES=30, DEFAULT_MIN_TURNS=10, AND semantics preserved, trial logic intact. Now the tests and README, plus memory.ts refreshIndex.\nThe cadence test default-min-minutes assertion expects 30. Now learn_test.sh.\nThe tests cover all three fixes well, including the failure-doesn't-advance assertion and batching. Let me verify README and run both tests.\nREADME updated to 30 minutes. Now run both tests.\nBoth pass. Let me confirm scope via git diff.\nAll three fixes are correctly implemented in the working tree:\n\n- **Fix 1** (learn.ts): `buildUpdaterTask` returns `{ task, included }`, slices to cap, always includes ≥1 transcript even if oversized; `runLearningPass` refreshes index for only `included`, `deltaCount = included.length`.\n- **Fix 2** (learn.ts + index.ts): index refresh moved after updater, gated on `exitCode === 0`; pre-write removed; `LearnRunOutcome` has `ok`/`stderr`; reason includes stderr tail; both index.ts paths surface `updater failed` warnings and success guard requires `outcome.ok`.\n- **Fix 3** (cadence.ts + README): `DEFAULT_MIN_MINUTES=30`, `DEFAULT_MIN_TURNS=10`, AND semantics and trial logic untouched; README says 30 minutes.\n\nTests updated appropriately (default-min-minutes asserts 30; new assertions cover failure-not-advancing and batching) and both pass. Changes are minimal, scoped to the extension, no Foreman/unrelated edits. No cheats — logic genuinely implements the intent.\n\nVERDICT: PASS"
+}

@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-03T06:30:40.796Z",
+  "role": "developer",
+  "round": 2,
+  "sessionId": "0dea45d6-3399-4059-8453-7e7e92dc33d2",
+  "summary": "Fixed continual-learning indexing so only mined transcripts are marked processed, updater failures no longer advance the index and are surfaced, and default cadence is now 30 minutes.",
+  "filesChanged": [
+    "extensions/continual-learning/learn.ts - track included transcripts, refresh index only on successful updater exit, return ok/stderr",
+    "extensions/continual-learning/index.ts - warn on failed updater outcomes",
+    "extensions/continual-learning/cadence.ts - lower default min minutes to 30",
+    "extensions/continual-learning/README.md - document new cadence and success-only index refresh",
+    "extensions/continual-learning/crew/agents-memory-updater.md - clarify updater does not edit index",
+    "extensions/continual-learning/test/cadence_test.sh - update default minutes expectation",
+    "extensions/continual-learning/test/learn_test.sh - add regression coverage for failures and batching"
+  ],
+  "howToVerify": "bash extensions/continual-learning/test/cadence_test.sh && bash extensions/continual-learning/test/learn_test.sh",
+  "raw": "## Completed\nFixed continual-learning reliability bugs:\n- Only indexed transcripts actually included in the updater digest.\n- Index now advances only after updater exit code `0`; failures return `ok:false` and surface warnings.\n- Default cadence reduced from 120 to 30 minutes.\n- Added regression coverage for failed updater and transcript batching.\n\n## Files Changed\n- `extensions/continual-learning/learn.ts` - success-only index refresh, included transcript tracking, failure outcome/stderr.\n- `extensions/continual-learning/index.ts` - warning notifications for failed updater outcomes.\n- `extensions/continual-learning/cadence.ts` - default min minutes 30.\n- `extensions/continual-learning/README.md` - updated cadence/index-flow docs.\n- `extensions/continual-learning/crew/agents-memory-updater.md` - clarified updater must not edit the index.\n- `extensions/continual-learning/test/cadence_test.sh` - updated default minutes assertion.\n- `extensions/continual-learning/test/learn_test.sh` - added regressions for failure/no-index-advance and batching.\n\n## How To Verify\n`bash extensions/continual-learning/test/cadence_test.sh && bash extensions/continual-learning/test/learn_test.sh`\n\n## Notes\nAlso ran the supplied Foreman gate command; all Foreman tests passed.\n\n## MACHINE BLOCK (MANDATORY — end your response with this exact block)\n---DEV-JSON---\n{\n  \"summary\": \"Fixed continual-learning indexing so only mined transcripts are marked processed, updater failures no longer advance the index and are surfaced, and default cadence is now 30 minutes.\",\n  \"filesChanged\": [\n    \"extensions/continual-learning/learn.ts - track included transcripts, refresh index only on successful updater exit, return ok/stderr\",\n    \"extensions/continual-learning/index.ts - warn on failed updater outcomes\",\n    \"extensions/continual-learning/cadence.ts - lower default min minutes to 30\",\n    \"extensions/continual-learning/README.md - document new cadence and success-only index refresh\",\n    \"extensions/continual-learning/crew/agents-memory-updater.md - clarify updater does not edit index\",\n    \"extensions/continual-learning/test/cadence_test.sh - update default minutes expectation\",\n    \"extensions/continual-learning/test/learn_test.sh - add regression coverage for failures and batching\"\n  ],\n  \"howToVerify\": \"bash extensions/continual-learning/test/cadence_test.sh && bash extensions/continual-learning/test/learn_test.sh\"\n}\n---END-DEV-JSON---"
+}

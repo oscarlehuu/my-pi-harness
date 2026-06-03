@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-03T06:31:22.009Z",
+  "role": "tester",
+  "round": 2,
+  "sessionId": "28023041-3b7f-47e2-87a2-ff8e52185090",
+  "successState": "success",
+  "summary": "I'll investigate the actual changes in the continual-learning extension.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll investigate the actual changes in the continual-learning extension.\nLearn.ts looks correct. Let me check index.ts, cadence.ts, memory.ts refreshIndex, and the tests.\nIndex.ts handles failures correctly. Now cadence.ts and the tests.\nAll three fixes present. Now the README and tests.\nREADME updated. Now run both tests.\nBoth pass. Let me verify the tests actually assert Fix 2 (non-zero exit doesn't advance index) and the 30-min default, not weakened.\nThe tests are comprehensive and genuinely cover all three fixes. Let me confirm the cadence test 30 default assertion.\nAll three fixes are correctly implemented, faithful to the task, and the tests genuinely verify the behavior (not cheats):\n\n- **Fix 1**: `buildUpdaterTask` returns `{ task, included }`, caps to 8/60k, always includes first transcript even if oversized; `runLearningPass` refreshes index for `included` only; `deltaCount = included.length`. Verified by batching/drain/oversized assertions (learn_test.sh:114-130).\n- **Fix 2**: Index refresh moved after updater, gated on `exitCode === 0`; pre-write removed; `LearnRunOutcome` has `ok`/`stderr`; failures surfaced via `ctx.ui.notify` warning in both paths; success guard requires `outcome.ok`. Test asserts exit-42 stub does NOT advance index (learn_test.sh:78-90).\n- **Fix 3**: `DEFAULT_MIN_MINUTES = 30` (turns still 10), AND semantics/trial untouched; README says 30; cadence test default-min-minutes assertion updated to 30, `opts()` keeps explicit 120 for gate test.\n\nBoth test scripts pass. Foreman/unrelated extensions untouched.\n\nVERDICT: PASS"
+}

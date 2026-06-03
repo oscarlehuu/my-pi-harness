@@ -33,11 +33,32 @@ for ext in "$REPO_DIR"/extensions/*/; do
   link "$ext" "$AGENT_DIR/extensions/$name"
 done
 
-# --- Foreman supplies the CTO persona + the crew it orchestrates ---
+# --- Foreman supplies the CTO persona + the charter ---
 link "$REPO_DIR/extensions/foreman/AGENTS.md" "$AGENT_DIR/AGENTS.md"
-link "$REPO_DIR/extensions/foreman/crew"      "$AGENT_DIR/agents"
 mkdir -p "$AGENT_DIR/foreman"
 link "$REPO_DIR/extensions/foreman/docs"      "$AGENT_DIR/foreman/charter"
+
+# --- Crew + skills: real dirs populated by per-file symlinks from every extension that ships them.
+# pi loads agents from ~/.pi/agent/agents/*.md and skills from ~/.pi/agent/skills/. Using a real dir
+# (not a whole-dir symlink) lets multiple domains (foreman/crew, continual-learning/crew, ...) coexist.
+[ -L "$AGENT_DIR/agents" ] && rm "$AGENT_DIR/agents"
+mkdir -p "$AGENT_DIR/agents"
+[ -L "$AGENT_DIR/skills" ] && rm "$AGENT_DIR/skills"
+mkdir -p "$AGENT_DIR/skills"
+for crew in "$REPO_DIR"/extensions/*/crew/; do
+  [ -d "$crew" ] || continue
+  for agent in "$crew"*.md; do
+    [ -f "$agent" ] || continue
+    link "$agent" "$AGENT_DIR/agents/$(basename "$agent")"
+  done
+done
+for skills in "$REPO_DIR"/extensions/*/skills/; do
+  [ -d "$skills" ] || continue
+  for skill in "$skills"*/; do
+    [ -d "$skill" ] || continue
+    link "${skill%/}" "$AGENT_DIR/skills/$(basename "$skill")"
+  done
+done
 
 # --- Shared infra ---
 link "$REPO_DIR/config/models.json" "$AGENT_DIR/models.json"

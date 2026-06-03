@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-03T06:58:48.181Z",
+  "role": "tester",
+  "round": 2,
+  "sessionId": "0d5b4208-5b6f-48a1-b0f6-2bc1d829eb84",
+  "successState": "success",
+  "summary": "I'll investigate the continual-learning extension changes.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll investigate the continual-learning extension changes.\nNow let me check index.ts, memory.ts refreshIndex, cadence.ts, and the tests.\nAll three fixes look implemented. Let me check memory.ts refreshIndex and the tests.\nThe learn_test thoroughly covers all three fixes. Let me check the cadence test and run both.\nThe cadence test line 102 asserts default `minMinutes` is 30. The `opts()` helper at line 19 uses explicit 120 which is fine. Let me run both tests.\nBoth pass. Let me verify the README change and confirm no test cheating (the default assertion checks real value 30).\nAll three fixes are correctly implemented and faithful:\n\n**Fix 1** — `buildUpdaterTask` returns `{ task, included }`; loops over sliced/under-cap set, always includes first transcript even if oversized (learn.ts:122-136). `runLearningPass` refreshes index for `included` only, `deltaCount = included.length`. Bulk test confirms over-cap delta (9th) is not marked and drains next pass.\n\n**Fix 2** — Index refresh moved after updater, gated on `exitCode === 0` (learn.ts:213-217). Pre-write removed. `LearnRunOutcome` extended with `ok`/`stderr`; reason includes stderr tail. index.ts surfaces `outcome.ran && !outcome.ok` warnings in both cadence and command paths, success guard requires `outcome.ok`. learn_test asserts failing stub does not advance index.\n\n**Fix 3** — `DEFAULT_MIN_MINUTES = 30`, `DEFAULT_MIN_TURNS = 10` unchanged, AND semantics intact. cadence_test default assertion expects 30 (real value, not hardcoded). README updated to 30 minutes.\n\nBoth test scripts pass. No test cheating — assertions check real behavior. Foreman untouched.\n\nVERDICT: PASS"
+}

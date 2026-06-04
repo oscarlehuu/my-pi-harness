@@ -1,0 +1,12 @@
+{
+  "name": "continual-learning",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "pi port of Cursor's continual-learning plugin: a cadence-gated agent_end hook that mines main-session transcript deltas into AGENTS.md via the agents-memory-updater subagent.",
+  "pi": {
+    "extensions": ["index.ts"],
+    "agents": "./crew/",
+    "skills": "./skills/"
+  }
+}

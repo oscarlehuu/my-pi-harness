@@ -6,6 +6,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { type LearnedDiff, diffLearnedMarkdown } from "./diff.ts";
 import {
 	LEARNED_HEADINGS,
 	NO_UPDATES_SENTINEL,
@@ -149,6 +150,7 @@ export interface LearnRunOutcome {
 	stderr?: string;
 	updaterText?: string;
 	deltaCount: number;
+	diff?: LearnedDiff;
 }
 
 export interface LearnRunDeps {
@@ -190,6 +192,13 @@ export async function runLearningPass(deps: LearnRunDeps): Promise<LearnRunOutco
 
 	ensureLearnedScaffold(paths.agentsMd);
 
+	let beforeMarkdown = "";
+	try {
+		beforeMarkdown = fs.readFileSync(paths.agentsMd, "utf-8");
+	} catch {
+		// best-effort
+	}
+
 	const { task, included } = buildUpdaterTask({ deltas, agentsMd: paths.agentsMd, indexFile: paths.indexFile });
 	// Lazy-load the real subprocess runner only when no injectable run is supplied. This keeps the
 	// orchestration module free of the pi-package import on the test/inject path.
@@ -202,10 +211,18 @@ export async function runLearningPass(deps: LearnRunDeps): Promise<LearnRunOutco
 		return { ran: true, ok: false, reason: `updater threw: ${stderr.slice(-1000)}`, stderr, deltaCount: included.length };
 	}
 
+	let diff: LearnedDiff | undefined;
 	if (result.exitCode === 0) {
 		const processed: TranscriptStat[] = included.map((d) => ({ path: d.path, mtimeMs: d.mtimeMs }));
 		const existingPaths = allTranscripts.map((t) => t.path);
 		writeJsonFile(paths.indexFile, refreshIndex(index, processed, existingPaths, deps.now));
+
+		try {
+			const afterMarkdown = fs.readFileSync(paths.agentsMd, "utf-8");
+			diff = diffLearnedMarkdown(beforeMarkdown, afterMarkdown);
+		} catch {
+			// best-effort
+		}
 	}
 
 	const stderrText = result.stderr ?? "";
@@ -217,5 +234,6 @@ export async function runLearningPass(deps: LearnRunDeps): Promise<LearnRunOutco
 		stderr,
 		updaterText: result.text,
 		deltaCount: included.length,
+		diff,
 	};
 }

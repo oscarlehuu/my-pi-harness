@@ -20,8 +20,11 @@ import { type LearnRunOutcome, readJsonFile, resolveLearnPaths, runLearningPass,
 import { NO_UPDATES_SENTINEL } from "./memory.ts";
 import { loadUpdaterAgent } from "./runner.ts";
 import { listSessionTranscripts, sessionLocationForCwd } from "./transcript.ts";
+import { renderDiffLines, isEmptyDiff } from "./diff.ts";
 
 const STATE_VERSION_NOTE = "continual-learning";
+const WIDGET_KEY = "continual-learning-diff";
+const DISMISS_TIMEOUT_MS = 30000;
 
 function loadCadenceState(stateFile: string): CadenceState {
 	const parsed = readJsonFile<Partial<CadenceState>>(stateFile);
@@ -55,6 +58,50 @@ export async function runLearningPassForCwd(cwd: string, signal?: AbortSignal): 
 
 export default function (pi: ExtensionAPI) {
 	let running = false;
+	let dismissTimer: NodeJS.Timeout | null = null;
+
+	const clearDiffWidget = (ctx: any) => {
+		if (dismissTimer) {
+			clearTimeout(dismissTimer);
+			dismissTimer = null;
+		}
+		ctx.ui?.setWidget?.(WIDGET_KEY, undefined);
+	};
+
+	const showDiffWidget = (ctx: any, outcome: LearnRunOutcome) => {
+		if (dismissTimer) {
+			clearTimeout(dismissTimer);
+			dismissTimer = null;
+		}
+
+		if (outcome.diff && !isEmptyDiff(outcome.diff)) {
+			const theme = ctx.ui?.theme;
+			// Build palette using known foreground tokens: toolDiffAdded (green), toolDiffRemoved (red), dim, accent.
+			// theme.fg is a Theme method (signature fg(token, text): string) — call it on `theme` so its `this`
+			// stays bound; fall back to identity only when theme/fg is absent (RPC/print modes).
+			const palette = {
+				added: (s: string) => (theme?.fg ? theme.fg("toolDiffAdded", s) : s),
+				removed: (s: string) => (theme?.fg ? theme.fg("toolDiffRemoved", s) : s),
+				heading: (s: string) => (theme?.fg ? theme.fg("accent", s) : s),
+				dim: (s: string) => (theme?.fg ? theme.fg("dim", s) : s),
+			};
+			const lines = renderDiffLines(outcome.diff, outcome.deltaCount, { palette, maxLines: 8, width: 100 });
+			ctx.ui?.setWidget?.(WIDGET_KEY, lines, { placement: "aboveEditor" });
+
+			dismissTimer = setTimeout(() => {
+				ctx.ui?.setWidget?.(WIDGET_KEY, undefined);
+				dismissTimer = null;
+			}, DISMISS_TIMEOUT_MS);
+		} else {
+			// Fallback if diff is empty/unavailable
+			const msg = `Continual learning: updated AGENTS.md from ${outcome.deltaCount} transcript(s).`;
+			ctx.ui?.notify?.(msg, "info");
+		}
+	};
+
+	pi.on("agent_start", (_event, ctx) => {
+		clearDiffWidget(ctx);
+	});
 
 	pi.on("agent_end", async (event, ctx) => {
 		// Never recurse: the updater runs as crew (FOREMAN_CREW/CONTINUAL_LEARNING_CREW) and must not
@@ -92,7 +139,7 @@ export default function (pi: ExtensionAPI) {
 				if (outcome.ran && !outcome.ok) {
 					ctx.ui?.notify?.(`Continual learning: updater failed (${outcome.reason}).`, "warning");
 				} else if (outcome.ran && outcome.ok && outcome.updaterText && !outcome.updaterText.includes(NO_UPDATES_SENTINEL)) {
-					ctx.ui?.notify?.(`Continual learning: updated AGENTS.md from ${outcome.deltaCount} transcript(s).`, "info");
+					showDiffWidget(ctx, outcome);
 				}
 			} catch {
 				// best-effort; swallow
@@ -116,12 +163,16 @@ export default function (pi: ExtensionAPI) {
 				if (outcome.ran && !outcome.ok) {
 					ctx.ui?.notify?.(`Continual learning: updater failed (${outcome.reason}).`, "warning");
 				} else {
-					const msg = !outcome.ran
-						? `Continual learning: nothing to do (${outcome.reason}).`
-						: outcome.updaterText?.includes(NO_UPDATES_SENTINEL)
-							? `Continual learning: no high-signal updates (${outcome.deltaCount} transcript(s) scanned).`
-							: `Continual learning: updated AGENTS.md (${outcome.deltaCount} transcript(s)).`;
-					ctx.ui?.notify?.(msg, "info");
+					if (outcome.ran && outcome.ok && outcome.updaterText && !outcome.updaterText.includes(NO_UPDATES_SENTINEL)) {
+						showDiffWidget(ctx, outcome);
+					} else {
+						const msg = !outcome.ran
+							? `Continual learning: nothing to do (${outcome.reason}).`
+							: outcome.updaterText?.includes(NO_UPDATES_SENTINEL)
+								? `Continual learning: no high-signal updates (${outcome.deltaCount} transcript(s) scanned).`
+								: `Continual learning: updated AGENTS.md (${outcome.deltaCount} transcript(s)).`;
+						ctx.ui?.notify?.(msg, "info");
+					}
 				}
 			} finally {
 				running = false;

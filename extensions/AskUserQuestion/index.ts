@@ -876,7 +876,7 @@ export default function AskUserQuestion(pi: ExtensionAPI) {
 			if (first.source === "remote") {
 				if (first.result.type === "unavailable") {
 					const localResult = await local.promise;
-					if (!localResult) return cancelledResult(questions, local.initialStates, "User cancelled AskUserQuestion.");
+					if (!localResult) return nonInteractiveResult(questions);
 					return answeredResult(questions, localResult.states);
 				}
 
@@ -885,10 +885,16 @@ export default function AskUserQuestion(pi: ExtensionAPI) {
 				return cancelledResult(questions, local.initialStates, first.result.reason);
 			}
 
-			remote.cancel("Answered in the local terminal.");
 			if (!first.result) {
-				return cancelledResult(questions, local.initialStates, "User cancelled AskUserQuestion.");
+				const remoteResult = await remote.promise;
+				if (remoteResult.type === "answered") return answeredResult(questions, remoteResult.states);
+				if (remoteResult.type === "dismissed") {
+					return cancelledResult(questions, createInitialNavigationState(questions).states, remoteResult.reason);
+				}
+				return nonInteractiveResult(questions);
 			}
+
+			remote.cancel("Answered in the local terminal.");
 			return answeredResult(questions, first.result.states);
 		},
 

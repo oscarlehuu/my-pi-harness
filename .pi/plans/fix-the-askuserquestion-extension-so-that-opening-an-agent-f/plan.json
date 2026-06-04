@@ -1,0 +1,48 @@
+{
+  "summary": "Fix the instant 'User cancelled AskUserQuestion' that occurs when an agent is opened from the phone (daemon-spawned `pi --mode rpc`). In execute()'s ctx.hasUI race path, startLocalDialog's ctx.ui.custom resolves to null in ~0ms (custom UI is non-interactive in rpc), wins the Promise.race, and the final block cancels the remote phone dialog and returns a false user-cancel. Treat a null local result as non-authoritative: when local 'wins' with null, await the remote and resolve from it (answered/dismissed/unavailable); when remote is unavailable AND local is null, return nonInteractiveResult instead of a false cancel. A real local answer still wins instantly (unchanged), a real phone dismiss still returns the phone's reason, and genuinely headless returns nonInteractiveResult. Only extensions/AskUserQuestion/index.ts changes, only inside execute(); the if(!ctx.hasUI) branch, startLocalDialog/startRemoteDialog/connectRemoteDialog, daemon, and pimote are untouched. No sleeps/delays are introduced.",
+  "steps": [
+    "Re-read execute() race path at index.ts:872-892 and confirm the exact text of the local-null final block (remote.cancel + cancelledResult 'User cancelled AskUserQuestion.') and the remote-unavailable sub-branch (index.ts:877-880).",
+    "In the remote-unavailable sub-branch: change `if (!localResult) return cancelledResult(questions, local.initialStates, \"User cancelled AskUserQuestion.\")` to return nonInteractiveResult(questions) when the awaited local result is null; keep `return answeredResult(questions, localResult.states)` when local has a real answer.",
+    "Replace the trailing local-win block: keep `if (first.result) { remote.cancel(\"Answered in the local terminal.\"); return answeredResult(questions, first.result.states); }` for a real local answer; for a null local result do NOT cancel remote — instead `const remoteResult = await remote.promise;` and map answered -> answeredResult(questions, remoteResult.states), dismissed -> cancelledResult(questions, createInitialNavigationState(questions).states, remoteResult.reason), unavailable -> nonInteractiveResult(questions).",
+    "Confirm createInitialNavigationState is already imported (used at index.ts:864) and that no other helper imports are needed.",
+    "Syntactic check: `node --check extensions/AskUserQuestion/index.ts` (must exit 0).",
+    "Run the existing logic suite: `bash extensions/AskUserQuestion/test/logic_test.sh` (expect the two static guards + 'AskUserQuestion pure logic tests passed').",
+    "Grep to confirm the fix surface: ensure the local-null path no longer yields 'User cancelled AskUserQuestion.', that nonInteractiveResult now appears in the race/unavailable branches, and that 'Answered in the local terminal.' remains only on the real-local-answer path.",
+    "Write the before/after race-behavior summary (phone-opened: stays alive and answered/dismissed by phone; real terminal: local answer wins instantly, unchanged; headless: nonInteractiveResult; real phone dismiss: cancelled with phone reason)."
+  ],
+  "filesLikely": [
+    "extensions/AskUserQuestion/index.ts"
+  ],
+  "risks": [
+    "logic_test.sh does NOT type-check or exercise execute()/the race path — it only greps index.ts (theme.bg allow-list; forbidden whole-question-note literals: question-note|Question note|whole-question|setNote|answer.note|noteParts) and runs logic.ts. Mitigation: keep edits inside execute(), avoid those banned tokens in any new wording, and rely on `node --check` for syntax. Runtime phone behavior is not auto-covered, so describe the before/after manually.",
+    "The .pi/foreman.json `verify` gate runs Foreman's own *_test.sh suite (all present and green-capable) but does NOT run AskUserQuestion's logic_test.sh; the task-relevant checks (logic_test.sh + node --check) are therefore run in-step, not added as a gate. foreman.json is reflected, not overwritten.",
+    "Must preserve exact return shapes: dismissed uses createInitialNavigationState(questions).states (a fresh initial state), NOT local.initialStates — matching the existing !ctx.hasUI dismissed branch; a real local answer must still call remote.cancel('Answered in the local terminal.') to avoid leaking the phone dialog.",
+    "node --check validates TypeScript-as-JS syntax loosely; it will not catch type errors. Acceptable here since the edit only reorders await/branch logic using existing typed helpers and the RemoteDialogResult union (answered|dismissed|unavailable).",
+    "Edit is read-only-planned now; do not touch the if(!ctx.hasUI) branch, startLocalDialog/startRemoteDialog/connectRemoteDialog, the daemon, or the pimote repo per task constraints."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [],
+    "services": []
+  }
+}

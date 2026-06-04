@@ -507,7 +507,7 @@ export class ForemanDashboard extends Container implements Focusable {
 		const gate1 = task?.gate1Approved ? this.theme.fg("success", "✓") : this.theme.fg("muted", "·");
 		const gate2 = task?.gate2Approved ? this.theme.fg("success", "✓") : this.theme.fg("muted", "·");
 		const header = [
-			this.borderTitle("FOREMAN", `task: ${task?.slug ?? view.slug}`, width),
+			this.borderTitle(`< FOREMAN`, `task: ${task?.slug ?? view.slug}`, width),
 			`state: ${this.colorState(task?.state ?? "unknown")}   owner ${this.ownerBadge(task)}   gate1 ${gate1}   gate2 ${gate2}   round ${task?.round ?? 0}/${task?.maxRounds ?? 0}`,
 			`verify: ${this.theme.fg("toolOutput", task?.verifyCommand ?? "(developer/tester inferred)")}`,
 			this.separator(width),
@@ -542,7 +542,7 @@ export class ForemanDashboard extends Container implements Focusable {
 			: this.theme.fg("muted", "○ replay");
 		const transcriptLabel = run ? `${run.role} r${run.round}` : "transcript";
 		const header = [
-			this.borderTitle(`← ${view.role} · round ${view.round}`, `${start?.model ?? "model?"}   ${running}`, width),
+			this.borderTitle(`< ${view.role} · round ${view.round}`, `${start?.model ?? "model?"}   ${running}`, width),
 			this.theme.fg("dim", `${transcriptLabel} · ${this.sessionBadge(run?.sessionId)}`),
 			this.separator(width),
 		];

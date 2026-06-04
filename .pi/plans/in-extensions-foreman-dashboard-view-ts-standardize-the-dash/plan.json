@@ -1,0 +1,45 @@
+{
+  "summary": "Standardize the dashboard back-navigation title marker to a literal '<' in extensions/foreman/dashboard/view.ts: add '< ' to the root/task header title (view.ts:510, 'FOREMAN' -> '< FOREMAN') and replace the leading '←' glyph with '<' in the agent/transcript header title (view.ts:545). Leave the picker root title (view.ts:480), footer '←/Esc' key hints, and the tool-result '← ' prefix (view.ts:626) unchanged.",
+  "steps": [
+    "Read view.ts around lines 470-560 to confirm exact text of the two target borderTitle calls (already inspected; renderRoot at 510, renderAgent at 545).",
+    "Edit view.ts:510 in renderRoot: change this.borderTitle(\"FOREMAN\", `task: ${task?.slug ?? view.slug}`, width) to this.borderTitle(`< FOREMAN`, `task: ${task?.slug ?? view.slug}`, width).",
+    "Edit view.ts:545 in renderAgent: change the leading '←' to '<' so it reads this.borderTitle(`< ${view.role} · round ${view.round}`, `${start?.model ?? \"model?\"} ${running}`, width).",
+    "Confirm the picker title at view.ts:480, footer '←/Esc' hints, and the tool_result '← ' preview prefix at view.ts:626 remain unchanged.",
+    "Verify: run the existing 'verify' gate command from .pi/foreman.json (test suite incl. dashboard reader_test.sh); additionally spot-check with grep that exactly two borderTitle calls now begin with '< ' and no borderTitle call still begins with '←'."
+  ],
+  "filesLikely": [
+    "extensions/foreman/dashboard/view.ts"
+  ],
+  "risks": [
+    "Multibyte glyph: the '←' at view.ts:545 is a multibyte UTF-8 char; the edit must replace the glyph itself, not a stray byte, to avoid corrupting the string.",
+    "Over-reach: must NOT touch the picker title (view.ts:480), footer '←/Esc' hints, or the tool-result '← ' prefix (view.ts:626); these share similar tokens but are out of scope.",
+    "No type-check gate available: there is no extensions/foreman/tsconfig.json or root tsconfig/package.json, so the legacy command's 'npx tsc --noEmit -p extensions/foreman' would fail and is intentionally not proposed; correctness is covered by the existing bash/node test suite.",
+    "These are template-literal string edits only (no logic change), so the existing tests assert behavior/reader output, not the literal title strings; the title change itself is validated by the grep spot-check rather than an existing assertion.",
+    "Assumption: '<' is intended as a plain ASCII literal (not an escaped/HTML entity), consistent with the task description."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [],
+    "services": []
+  }
+}

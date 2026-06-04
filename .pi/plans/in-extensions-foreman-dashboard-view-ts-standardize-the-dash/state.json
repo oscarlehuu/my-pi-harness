@@ -1,0 +1,16 @@
+{
+  "task": "In extensions/foreman/dashboard/view.ts, standardize the dashboard's back-navigation title marker to a literal \"<\" so it is consistent across all screens.\n\nTwo changes, both in the header `borderTitle(...)` calls inside the render methods:\n\n1. Root/task screen (renderRoot, around line 510): the title currently has NO back marker. Change the left title from `\"FOREMAN\"` to a back marker form `\"< FOREMAN\"`.\n   - Current: `this.borderTitle(\"FOREMAN\", `task: ${task?.slug ?? view.slug}`, width),`\n   - New: `this.borderTitle(`< FOREMAN`, `task: ${task?.slug ?? view.slug}`, width),`\n\n2. Agent/transcript screen (renderAgent, around line 545): the left title currently begins with the arrow glyph `←`. Replace that leading `←` with a literal `<`.\n   - Current: `this.borderTitle(`← ${view.role} · round ${view.round}`, `${start?.model ?? \"model?\"}   ${running}`, width),`\n   - New: `this.borderTitle(`< ${view.role} · round ${view.round}`, `${start?.model ?? \"model?\"}   ${running}`, width),`\n\nDo NOT change:\n- The picker (top-level) screen title `borderTitle(\"FOREMAN\", ...)` at ~line 480 — it is the root screen with nowhere to go back to.\n- The footer key-hint lines that mention `←/Esc` (these describe the physical arrow key, not a title marker).\n- The transcript tool-result line that prefixes output with `← ` (~line 626) — unrelated.\n\nNet effect: the root/task screen title reads `< FOREMAN`, and the agent screen title reads `< <role> · round N`, matching the same `<` back-marker convention.",
+  "slug": "in-extensions-foreman-dashboard-view-ts-standardize-the-dash",
+  "state": "done",
+  "workingDirectory": "/Users/a1241968/Desktop/Oscar/my-pi-harness",
+  "track": "backend",
+  "ownerSessionId": "9a1b7963-1264-4e25-a21e-7ec185fe7201",
+  "verifyCommand": "cd /Users/a1241968/Desktop/Oscar/my-pi-harness && grep -n 'borderTitle(`< ' extensions/foreman/dashboard/view.ts; echo '--- should show 2 lines (root + agent). Ensure no remaining ← in borderTitle calls: ---'; grep -n 'borderTitle(`←' extensions/foreman/dashboard/view.ts || echo 'OK: no arrow-glyph borderTitle remains'; npx tsc --noEmit -p extensions/foreman 2>/dev/null || echo 'tsc check (informational)'",
+  "round": 1,
+  "maxRounds": 3,
+  "lastReviewedHandoffCount": 3,
+  "gate1Approved": true,
+  "gate2Approved": true,
+  "createdAt": "2026-06-04T04:05:48.680Z",
+  "updatedAt": "2026-06-04T04:09:34.137Z"
+}

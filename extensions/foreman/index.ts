@@ -21,19 +21,23 @@ import { classifyToolCall } from "./guard.ts";
 import {
 	type Handoff,
 	type LedgerState,
+	type PendingQuestion,
 	type SuccessState,
 	type Track,
 	appendLog,
+	clearPendingQuestion,
 	configureMirror,
 	initLedger,
 	resolveResumable,
 	listHandoffs,
+	readPendingQuestion,
 	readState,
 	restoreFromMirror,
 	taskDir,
 	transcriptsDir,
 	writeActivity,
 	writeHandoff,
+	writePendingQuestion,
 	writeState,
 } from "./ledger.ts";
 import { ForemanDashboard } from "./dashboard/view.ts";
@@ -124,6 +128,8 @@ interface RunAgentOptions {
 	transcriptPath: string;
 	signal?: AbortSignal;
 	onActivity?: () => void;
+	/** Task slug this agent serves. Threaded to the crew subprocess so escalate_question can record against it. */
+	slug?: string;
 }
 
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
@@ -255,7 +261,12 @@ async function runAgent(agent: AgentDef, task: string, cwd: string, options: Run
 			cwd,
 			shell: false,
 			stdio: ["ignore", "pipe", "pipe"],
-			env: { ...process.env, FOREMAN_CREW: "1" },
+			env: {
+				...process.env,
+				FOREMAN_CREW: "1",
+				// Let the crew-only escalate_question tool record against the right task/round.
+				...(options.slug ? { FOREMAN_TASK_SLUG: options.slug, FOREMAN_TASK_CWD: cwd, FOREMAN_TASK_ROUND: String(options.round) } : {}),
+			},
 		});
 		let buffer = "";
 
@@ -414,6 +425,23 @@ function parseVerdict(text: string): { successState: SuccessState; parsedFrom: s
 
 function commandGateLabel(gate: Gate): string {
 	return gate.command ? `${gate.name} (\`${gate.command}\`)` : gate.name;
+}
+
+/** Founder-facing prompt when a crew member escalates a decision (state = awaiting_decision). */
+function formatDecisionPrompt(round: number, q: PendingQuestion): string {
+	const optionLines = q.options?.length ? `\nOptions:\n${q.options.map((o) => `  - ${o}`).join("\n")}` : "";
+	const contextLine = q.context ? `\nContext: ${q.context}` : "";
+	return (
+		`\n=== CREW DECISION NEEDED (round ${round}) ===\n` +
+		`The ${q.askedBy} is blocked and needs a decision before it can continue:\n\n` +
+		`  ${q.question}` +
+		contextLine +
+		optionLines +
+		`\n\nAnswer it (from context if you can, otherwise ask the founder), then resume:\n` +
+		`  foreman({ resume: true, answer: "<the decision>" })\n` +
+		`Or send it back without answering:\n` +
+		`  foreman({ resume: true, reject: "<new direction>" })`
+	);
 }
 
 function formatCommandGateResults(results: CommandGateResult[], outputCapPerGate = 1500): string {
@@ -975,8 +1003,19 @@ const LoopParams = {
 		approve: { type: "boolean", description: "Approve the current gate (plan at start, ship after success) and continue." },
 		reject: { type: "string", description: "Reject the current gate with feedback; the task is halted for revision." },
 		engage: { type: "boolean", description: "Persist Foreman engagement for this repo. true routes impactful main-session edits through Foreman; false allows direct edits until re-engaged." },
+		answer: { type: "string", description: "Answer a crew member's escalated question (when the task is awaiting_decision) and resume the loop with it injected into the next round." },
 	},
 	required: [],
+} as const;
+
+const EscalateQuestionParams = {
+	type: "object",
+	properties: {
+		question: { type: "string", description: "The specific decision you need made. Be concrete; name the fork." },
+		context: { type: "string", description: "Optional: why you're blocked and what you've tried, so the founder can decide fast." },
+		options: { type: "array", items: { type: "string" }, description: "Optional: the concrete choices, ideally with your recommended default first." },
+	},
+	required: ["question"],
 } as const;
 
 let dashboardOpen = false;
@@ -1021,6 +1060,67 @@ export default function (pi: ExtensionAPI) {
 		const root = foremanRepoRoot(ctx.cwd);
 		setForemanDirectStatus(ctx, repoEngagementActive(root));
 	});
+
+	// ---- Crew escalation channel (crew subprocesses only) ----
+	// The headless developer/ui-developer cannot ask the founder directly (no AskUserQuestion, no
+	// foreman in their tool allowlist). When a real decision blocks them, this records the question to
+	// the task ledger and returns immediately, so the crew NEVER blocks. The parent loop detects the
+	// recorded question after the round, pauses as an awaiting_decision gate, and relays it up to the
+	// orchestrator (which answers from context or asks the founder). Registered only when FOREMAN_CREW
+	// is set so it never appears in the founder-facing orchestrator session.
+	if (process.env.FOREMAN_CREW === "1") {
+		pi.registerTool({
+			name: "escalate_question",
+			label: "Escalate a question to the founder",
+			description: [
+				"Raise a blocking decision to the Foreman orchestrator (and, if needed, the founder) WITHOUT",
+				"blocking. Use this only when a genuine fork — an ambiguous requirement or a product/design",
+				"choice only the founder can make — stops you from proceeding correctly. Provide a specific",
+				"question and your recommended default. The tool records the question and returns immediately;",
+				"you should then STOP and end your turn. The orchestrator relays the answer and resumes the",
+				"loop. Do NOT use this for routine implementation choices you can reasonably make yourself.",
+			].join(" "),
+			parameters: EscalateQuestionParams as any,
+			async execute(_id: string, params: any) {
+				const slug = process.env.FOREMAN_TASK_SLUG;
+				const taskCwd = process.env.FOREMAN_TASK_CWD;
+				const round = Number(process.env.FOREMAN_TASK_ROUND ?? "0") || 0;
+				const question = typeof params?.question === "string" ? params.question.trim() : "";
+				if (!question) {
+					return { content: [{ type: "text", text: "escalate_question requires a non-empty `question`." }], isError: true };
+				}
+				if (!slug || !taskCwd) {
+					// No task context: cannot record. Tell the agent to proceed rather than stall.
+					return {
+						content: [{ type: "text", text: "No active Foreman task context; cannot escalate. Proceed with your best assumption and note it." }],
+						isError: true,
+					};
+				}
+				const options = Array.isArray(params?.options) ? params.options.filter((o: unknown): o is string => typeof o === "string" && o.trim().length > 0) : undefined;
+				const pending: PendingQuestion = {
+					round,
+					askedBy: "developer",
+					question,
+					...(typeof params?.context === "string" && params.context.trim() ? { context: params.context.trim() } : {}),
+					...(options && options.length ? { options } : {}),
+					createdAt: new Date().toISOString(),
+				};
+				try {
+					writePendingQuestion(taskCwd, slug, pending);
+				} catch (error) {
+					return { content: [{ type: "text", text: `Failed to record escalation: ${String(error)}. Proceed with your best assumption.` }], isError: true };
+				}
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Question recorded and escalated to the orchestrator. STOP now and end your turn; the loop will resume you with the founder's answer.",
+						},
+					],
+				};
+			},
+		});
+	}
 
 	pi.on("tool_call", (event, ctx) => {
 		if (process.env.FOREMAN_CREW === "1") return undefined;
@@ -1307,6 +1407,37 @@ export default function (pi: ExtensionAPI) {
 				devContext += `\n\nPer-round command gates:\n${perRoundCommandGates.map((gate) => `- ${gate.name}: ${gate.command}`).join("\n")}`;
 			}
 
+			// ---- CREW DECISION resume: orchestrator/founder answers a question the crew raised ----
+			if (state.state === "awaiting_decision") {
+				const pending = state.pendingDecision;
+				if (params.reject) {
+					state.state = "in_progress";
+					state.pendingDecision = undefined;
+					writeState(cwd, state);
+					appendLog(cwd, slug, { type: "crew_question_redirected", round: state.round, feedback: params.reject });
+					emit(`Decision redirected: ${params.reject}\nReopening the developer round with new direction.`);
+					devContext =
+						`Continue task in ${cwd}: ${state.task}\n\n` +
+						(pending ? `You earlier asked: ${pending.question}\n\n` : "") +
+						`The founder redirected instead of answering directly:\n${params.reject}\n\nProceed on this basis. Do not re-ask the same question.`;
+					// fall through into the round loop
+				} else if (typeof params.answer === "string" && params.answer.trim()) {
+					state.state = "in_progress";
+					state.pendingDecision = undefined;
+					writeState(cwd, state);
+					appendLog(cwd, slug, { type: "crew_question_answered", round: state.round, answer: params.answer });
+					emit(`Decision delivered. Resuming the developer round with the answer.`);
+					devContext =
+						`Continue task in ${cwd}: ${state.task}\n\n` +
+						(pending ? `You asked: ${pending.question}\n` : "") +
+						`The founder's decision: ${params.answer}\n\nApply this and continue. Do not re-ask; if a further fork appears, escalate a NEW specific question.`;
+					// fall through into the round loop
+				} else {
+					emit(pending ? formatDecisionPrompt(pending.round, pending) : "This task is awaiting a crew decision. Provide `answer` to resume.");
+					return done();
+				}
+			}
+
 			// ---- GATE 2 resume: founder decides on a task that already passed verification ----
 			if (state.state === "awaiting_ship") {
 				if (params.reject) {
@@ -1385,6 +1516,7 @@ export default function (pi: ExtensionAPI) {
 					round,
 					transcriptPath: devTranscript,
 					signal,
+					slug,
 				});
 				stopSpinner();
 				let devBlock = extractJsonBlock(devRun.text, "---DEV-JSON---", "---END-DEV-JSON---");
@@ -1392,7 +1524,9 @@ export default function (pi: ExtensionAPI) {
 				// ---- UI-DEVELOPER FALLBACK (frontend track only) ----
 				// Gemini has taste but is flaky at tool-calling; if it errored, skipped the machine block,
 				// or changed nothing on disk, re-run THIS round once with a stronger model (Opus xhigh).
-				if (track === "frontend" && !signal.aborted) {
+				// Skip the fallback when the dev escalated a question: an empty tree is then intentional
+				// (it stopped to ask), not a flaky no-op, and re-running would burn Opus and likely re-ask.
+				if (track === "frontend" && !signal.aborted && !readPendingQuestion(cwd, slug)) {
 					const reason = devFallbackReason(devRun, devBlock != null, treeBefore, workingTreeSnapshot(cwd));
 					if (reason) {
 						appendLog(cwd, slug, { type: "ui_fallback", round, reason, from: developer.model ?? "default", to: UI_FALLBACK_MODEL });
@@ -1412,6 +1546,7 @@ export default function (pi: ExtensionAPI) {
 							round,
 							transcriptPath: devTranscript,
 							signal,
+							slug,
 						});
 						stopSpinner();
 						devBlock = extractJsonBlock(devRun.text, "---DEV-JSON---", "---END-DEV-JSON---");
@@ -1428,6 +1563,30 @@ export default function (pi: ExtensionAPI) {
 					raw: devRun.text,
 				};
 				writeHandoff(cwd, slug, devHandoff);
+
+				// ---- CREW ESCALATION GATE: developer raised a question it couldn't decide ----
+				// The crew can't block on the founder, so it recorded a question and stopped. Pause the loop
+				// (awaiting_decision) and surface it to the orchestrator, which answers from context or asks
+				// the founder, then resumes with foreman({ resume: true, answer: "..." }).
+				const escalated = readPendingQuestion(cwd, slug);
+				if (escalated) {
+					clearPendingQuestion(cwd, slug); // consumed: copy into durable state so resume survives a restart
+					state.state = "awaiting_decision";
+					state.pendingDecision = escalated;
+					writeState(cwd, state);
+					appendLog(cwd, slug, { type: "crew_question_raised", round, askedBy: escalated.askedBy, question: escalated.question });
+					writeActivity(cwd, slug, {
+						round,
+						phase: "idle",
+						activeTranscript: path.basename(devTranscript),
+						note: `awaiting decision: ${escalated.question.slice(0, 200)}`,
+						pid: process.pid,
+						ownerSessionId: sessionId,
+					});
+					pushStatus();
+					emit(formatDecisionPrompt(round, escalated));
+					return done();
+				}
 
 				// ---- VERIFY (controller runs command gates; exit code = GROUND TRUTH) ----
 				let verifyExit: number | null = null;

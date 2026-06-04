@@ -528,6 +528,7 @@ const STATUSLINE_STAGES: StatuslineStage[] = ["plan", "dev", "test", "fix", "shi
 function statuslineStage(state: string, phase: StatuslinePhase | null, role: string | undefined, round: number): StatuslineStage | undefined {
 	if (state === "awaiting_ship" || state === "ship") return "ship";
 	if (state === "planning") return "plan";
+	if (state === "awaiting_decision") return round >= 2 ? "fix" : "dev";
 	const normalizedRole = role?.toLowerCase();
 	if (normalizedRole === "planner" || phase === "planner") return "plan";
 	if (normalizedRole === "tester" || normalizedRole === "verify" || phase === "tester" || phase === "verify") return "test";
@@ -558,7 +559,7 @@ export function buildStatuslineModel(cwd: string, opts: StatuslineOptions = {}):
 		let glyph: StatuslineGlyph;
 		if (t.state === "done") glyph = "done";
 		else if (t.state === "escalated") glyph = "escalated";
-		else if (t.state === "awaiting_ship") glyph = "gate";
+		else if (t.state === "awaiting_ship" || t.state === "awaiting_decision") glyph = "gate";
 		else if (fresh && phase) glyph = "running";
 		else if (t.state === "planning") glyph = "gate";
 		else glyph = "idle";
@@ -590,6 +591,8 @@ function statusDetail(state: string, phase: StatuslinePhase | null, role?: strin
 	switch (state) {
 		case "awaiting_ship":
 			return "ship?";
+		case "awaiting_decision":
+			return "answer?";
 		case "planning":
 			return "plan?";
 		case "escalated":
@@ -654,7 +657,7 @@ function statusAttentionRank(task: StatuslineTask): number {
 
 function pickerAttentionRank(task: ForemanTaskSummary, liveSlugs: Set<string>): number {
 	if (liveSlugs.has(task.slug)) return 0;
-	if (task.state === "awaiting_ship" || task.state === "planning") return 1;
+	if (task.state === "awaiting_ship" || task.state === "awaiting_decision" || task.state === "planning") return 1;
 	if (task.state === "escalated") return 2;
 	if (task.state === "done") return 4;
 	return 3;
@@ -665,7 +668,12 @@ function stageForTask(task: StatuslineTask): StatuslineStage | undefined {
 }
 
 function isStatuslineLive(task: StatuslineTask): boolean {
-	return task.state !== "done" && task.state !== "awaiting_ship" && Boolean(stageForTask(task) && (task.phase || task.elapsedMs !== undefined || task.lastMovementMs !== undefined || task.glyph === "running"));
+	return (
+		task.state !== "done" &&
+		task.state !== "awaiting_ship" &&
+		task.state !== "awaiting_decision" &&
+		Boolean(stageForTask(task) && (task.phase || task.elapsedMs !== undefined || task.lastMovementMs !== undefined || task.glyph === "running"))
+	);
 }
 
 export function formatElapsed(ms: number | undefined): string {
@@ -766,6 +774,7 @@ function renderLiveness(task: StatuslineTask, color: (token: string, text: strin
 
 function gatePrompt(task: StatuslineTask): string {
 	if (task.state === "awaiting_ship") return "awaiting ship · approve?";
+	if (task.state === "awaiting_decision") return "crew question · answer?";
 	return task.state === "planning" ? "planning · approve?" : "gate";
 }
 

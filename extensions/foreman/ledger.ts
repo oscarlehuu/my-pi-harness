@@ -19,10 +19,26 @@ export type ActivityPhase = "developer" | "verify" | "tester" | "idle";
 /** Which implementer drives the round. 'frontend' routes to the ui-developer (with model fallback). */
 export type Track = "backend" | "frontend";
 
+/**
+ * A question a crew agent (developer) raised mid-task. Crew subprocesses are headless and must never
+ * block on a founder answer, so instead of routing to an interactive dialog they record the question
+ * here; the loop surfaces it to the orchestrator (Gate-style) and resumes once answered.
+ */
+export interface PendingQuestion {
+	round: number;
+	askedBy: string;
+	question: string;
+	context?: string;
+	options?: string[];
+	createdAt: string;
+}
+
 export interface LedgerState {
 	task: string;
 	slug: string;
-	state: "planning" | "in_progress" | "awaiting_ship" | "done" | "escalated";
+	state: "planning" | "in_progress" | "awaiting_ship" | "awaiting_decision" | "done" | "escalated";
+	/** Set when state === "awaiting_decision": the crew question the orchestrator must answer to resume. */
+	pendingDecision?: PendingQuestion;
 	workingDirectory: string;
 	/** Implementation track: 'backend' (developer) or 'frontend' (ui-developer). Defaults to backend. */
 	track?: Track;
@@ -185,6 +201,7 @@ function ensureGitignore(workingDir: string): void {
 		"# ...but keep machine-local noise out of the committed ledger.",
 		"plans/*/transcripts/",
 		"plans/*/activity.json",
+		"plans/*/pending_question.json",
 		"plans/**/*.log",
 	];
 	if (!fs.existsSync(giPath)) {
@@ -262,6 +279,35 @@ export function appendLog(workingDir: string, slug: string, entry: Record<string
 	const p = path.join(taskDir(workingDir, slug), "log.jsonl");
 	fs.appendFileSync(p, `${JSON.stringify({ timestamp: nowIso(), ...entry })}\n`);
 	syncToMirror(workingDir, slug);
+}
+
+// ---- Crew escalation channel ----
+// The crew subprocess (developer) WRITES pending_question.json; the parent loop READS and CLEARS it,
+// then copies the question into state.pendingDecision (which is mirrored via state.json for resume
+// durability). Only the child writes the file and only the parent owns state.json, so there is no
+// concurrent-writer race on either path.
+function pendingQuestionPath(workingDir: string, slug: string): string {
+	return path.join(taskDir(workingDir, slug), "pending_question.json");
+}
+
+export function writePendingQuestion(workingDir: string, slug: string, q: PendingQuestion): void {
+	atomicWriteJson(pendingQuestionPath(workingDir, slug), q);
+}
+
+export function readPendingQuestion(workingDir: string, slug: string): PendingQuestion | null {
+	try {
+		return JSON.parse(fs.readFileSync(pendingQuestionPath(workingDir, slug), "utf-8")) as PendingQuestion;
+	} catch {
+		return null;
+	}
+}
+
+export function clearPendingQuestion(workingDir: string, slug: string): void {
+	try {
+		fs.rmSync(pendingQuestionPath(workingDir, slug), { force: true });
+	} catch {
+		// best-effort; a stale file is re-read at most once and cleared by the next round.
+	}
 }
 
 export function writeActivity(workingDir: string, slug: string, activity: Activity): void {

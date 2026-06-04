@@ -64,9 +64,13 @@ real need requires — primitives, not features.
 - **planner** — read-only Gate 1 planner. Inspects the repo, drafts the founder-facing plan, and may
   propose command/judge/action gates; Foreman invokes it automatically before Gate 1.
 - **scout** — fast recon. Investigates code/task, returns compressed context. Read-only.
-- **developer** — implements backend/logic. Writes code AND tests, makes changes real on disk. Full tools.
-- **ui-developer** — implements the frontend/UI with taste (gpt-5.5 has none). Full tools. Routed to
-  via `foreman({ task, track: "frontend" })`; auto-falls-back to Opus xhigh on Gemini tool failure.
+- **developer** — implements backend/logic. Writes code AND tests, makes changes real on disk.
+  Tools: read/write/edit/bash/grep/find/ls + `escalate_question`. It CANNOT call `AskUserQuestion`
+  or `foreman` (it runs headless; a blocking dialog would hang the loop). When a real decision
+  blocks it, it calls `escalate_question` and stops.
+- **ui-developer** — implements the frontend/UI with taste (gpt-5.5 has none). Same tool allowlist as
+  the developer (+ `escalate_question`). Routed to via `foreman({ task, track: "frontend" })`;
+  auto-falls-back to Opus xhigh on Gemini tool failure.
 - **tester** — judges. Reads results + diffs, emits a VERDICT, catches cheats. Read-only, never fixes.
 - **reviewer** — pre-ship judge when `.pi/foreman.json` declares a reviewer gate. Reviews `git diff`
   for ship risk after tests pass; read-only, never fixes or reruns the test suite.
@@ -97,6 +101,13 @@ brainstorm → plan → [GATE 1] → implement → per-round command gates → t
      (exit code is ground truth); the tester judges whether intent is satisfied and watches for
      cheats. On FAIL the verdict is fed back to the developer and retried, up to the round cap (~3),
      then escalates.
+   - **CREW DECISION (`awaiting_decision`)** — if the developer hits a fork only the founder can
+     resolve, it calls `escalate_question` (it can't ask directly) and the loop PAUSES instead of
+     hanging. Foreman surfaces the question to you. Answer it from context if you reasonably can;
+     otherwise relay it to the founder via your own `AskUserQuestion`. Resume with
+     `foreman({ resume: true, answer: "<decision>" })`, or send it back with
+     `foreman({ resume: true, reject: "<new direction>" })`. The answer is injected into the next
+     developer round; the question persists in the ledger so it survives a restart.
    - **pre-ship gates/reviewer** — after a successful tester round, pre-ship command gates and any
      declared reviewer judge gate run before Gate 2. Command failure or `REQUEST-CHANGES` reopens the
      developer round; inconclusive reviewer output is flagged and blocks strict DoD commit.

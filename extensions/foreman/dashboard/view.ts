@@ -675,7 +675,7 @@ export class ForemanDashboard extends Container implements Focusable {
 	private colorState(state: string): string {
 		if (state === "done") return this.theme.fg("success", state);
 		if (state === "escalated") return this.theme.fg("error", state);
-		if (state === "awaiting_ship" || state === "planning") return this.theme.fg("warning", state);
+		if (state === "awaiting_ship" || state === "awaiting_decision" || state === "planning") return this.theme.fg("warning", state);
 		if (state === "in_progress") return this.theme.fg("accent", state);
 		return this.theme.fg("muted", state);
 	}

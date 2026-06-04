@@ -22,6 +22,7 @@ import {
 	type Handoff,
 	type LedgerState,
 	type PendingQuestion,
+	type ResolvedDecision,
 	type SuccessState,
 	type Track,
 	appendLog,
@@ -425,6 +426,20 @@ function parseVerdict(text: string): { successState: SuccessState; parsedFrom: s
 
 function commandGateLabel(gate: Gate): string {
 	return gate.command ? `${gate.name} (\`${gate.command}\`)` : gate.name;
+}
+
+/**
+ * Founder decisions that resolved earlier crew escalations, rendered for the developer/tester prompt.
+ * This is what lets the tester know a literal value was founder-approved (not a hardcoded guess), and
+ * keeps the decision in front of the developer on later rounds. Empty string when there are none.
+ */
+function formatResolvedDecisions(decisions: ResolvedDecision[] | undefined): string {
+	if (!decisions?.length) return "";
+	const lines = decisions.map((d) => (d.question ? `- Q: ${d.question}\n  Founder decision: ${d.decision}` : `- Founder decision: ${d.decision}`));
+	return (
+		`Founder decisions already made for this task (authoritative — these were chosen by the founder via the ` +
+		`escalation channel, so implementing them exactly is CORRECT, not a guess or a hardcoded cheat):\n${lines.join("\n")}`
+	);
 }
 
 /** Founder-facing prompt when a crew member escalates a decision (state = awaiting_decision). */
@@ -1422,15 +1437,21 @@ export default function (pi: ExtensionAPI) {
 						`The founder redirected instead of answering directly:\n${params.reject}\n\nProceed on this basis. Do not re-ask the same question.`;
 					// fall through into the round loop
 				} else if (typeof params.answer === "string" && params.answer.trim()) {
+					const answer = params.answer.trim();
 					state.state = "in_progress";
 					state.pendingDecision = undefined;
+					// Persist the decision so it survives across rounds/restarts and reaches the tester too.
+					state.resolvedDecisions = [
+						...(state.resolvedDecisions ?? []),
+						{ round: pending?.round ?? state.round, ...(pending?.question ? { question: pending.question } : {}), decision: answer, createdAt: new Date().toISOString() },
+					];
 					writeState(cwd, state);
-					appendLog(cwd, slug, { type: "crew_question_answered", round: state.round, answer: params.answer });
+					appendLog(cwd, slug, { type: "crew_question_answered", round: state.round, answer });
 					emit(`Decision delivered. Resuming the developer round with the answer.`);
 					devContext =
 						`Continue task in ${cwd}: ${state.task}\n\n` +
 						(pending ? `You asked: ${pending.question}\n` : "") +
-						`The founder's decision: ${params.answer}\n\nApply this and continue. Do not re-ask; if a further fork appears, escalate a NEW specific question.`;
+						`The founder's decision: ${answer}\n\nApply this and continue. Do not re-ask; if a further fork appears, escalate a NEW specific question.`;
 					// fall through into the round loop
 				} else {
 					emit(pending ? formatDecisionPrompt(pending.round, pending) : "This task is awaiting a crew decision. Provide `answer` to resume.");
@@ -1511,7 +1532,11 @@ export default function (pi: ExtensionAPI) {
 				pushStatus();
 				startSpinner();
 				const treeBefore = track === "frontend" ? workingTreeSnapshot(cwd) : null;
-				let devRun = await runAgent(developer, devContext, cwd, {
+				// Always re-attach founder decisions so a fail-retry round (which rebuilds devContext) never
+				// loses them. Idempotent: the resume branch may already include the latest answer in prose.
+				const decisionsForDev = formatResolvedDecisions(state.resolvedDecisions);
+				const devContextWithDecisions = decisionsForDev ? `${devContext}\n\n${decisionsForDev}` : devContext;
+				let devRun = await runAgent(developer, devContextWithDecisions, cwd, {
 					role: "developer",
 					round,
 					transcriptPath: devTranscript,
@@ -1541,7 +1566,7 @@ export default function (pi: ExtensionAPI) {
 						});
 						pushStatus();
 						startSpinner();
-						devRun = await runAgent({ ...developer, model: UI_FALLBACK_MODEL }, devContext, cwd, {
+						devRun = await runAgent({ ...developer, model: UI_FALLBACK_MODEL }, devContextWithDecisions, cwd, {
 							role: "developer",
 							round,
 							transcriptPath: devTranscript,
@@ -1636,10 +1661,15 @@ export default function (pi: ExtensionAPI) {
 						: isLegacyVerifyGate
 							? `The verify command \`${verifyCommand}\` already ran. Exit code: ${verifyExit} (0 = passed).\nOutput:\n${verifyResults[0]?.output.slice(-3000) ?? ""}`
 							: `The per-round command gates already ran. Aggregate exit code: ${verifyExit} (0 = passed; non-zero = failed).\n${verifyOutput.slice(-3000)}`;
+				const decisionsForTester = formatResolvedDecisions(state.resolvedDecisions);
 				const testerTask =
 					`Judge whether the work in ${cwd} satisfies this task: ${state.task}\n\n${verifyInfo}\n\n` +
+					(decisionsForTester ? `${decisionsForTester}\n\n` : "") +
 					`Read the changed files to confirm the change actually fulfills the task intent (not just that ` +
-					`a command exited 0 — watch for cheats like hardcoding or editing tests). Then emit your VERDICT line.`;
+					`a command exited 0 — watch for cheats like hardcoding or editing tests). Then emit your VERDICT line.` +
+					(decisionsForTester
+						? ` A literal value that matches a founder decision above is APPROVED, not a hardcoded cheat — do not FAIL it for being hardcoded.`
+						: "");
 				const testSession = randomUUID();
 				const testTranscript = transcriptFilePath(cwd, slug, "tester", round, testSession);
 				writeActivity(cwd, slug, {

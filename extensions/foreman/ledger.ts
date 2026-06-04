@@ -33,12 +33,27 @@ export interface PendingQuestion {
 	createdAt: string;
 }
 
+/**
+ * A founder decision that resolved a crew escalation. Persisted on the ledger so it survives across
+ * rounds and restarts, and so EVERY downstream stage (developer next round, tester) knows the value
+ * was founder-approved — not guessed. Without this the tester only sees the diff and can flag a
+ * founder-chosen literal as a "hardcoded guess".
+ */
+export interface ResolvedDecision {
+	round: number;
+	question?: string;
+	decision: string;
+	createdAt: string;
+}
+
 export interface LedgerState {
 	task: string;
 	slug: string;
 	state: "planning" | "in_progress" | "awaiting_ship" | "awaiting_decision" | "done" | "escalated";
 	/** Set when state === "awaiting_decision": the crew question the orchestrator must answer to resume. */
 	pendingDecision?: PendingQuestion;
+	/** Founder decisions that resolved crew escalations, in order. Fed to the developer AND tester each round. */
+	resolvedDecisions?: ResolvedDecision[];
 	workingDirectory: string;
 	/** Implementation track: 'backend' (developer) or 'frontend' (ui-developer). Defaults to backend. */
 	track?: Track;

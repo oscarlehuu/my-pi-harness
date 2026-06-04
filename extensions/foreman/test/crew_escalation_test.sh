@@ -54,6 +54,19 @@ if ! grep -Eq 'FOREMAN_CREW === "1"\)\s*\{' "${idx}"; then
 fi
 echo "Foreman escalate_question crew-guard presence check passed"
 
+# ---- Layer 1c: founder decisions reach the TESTER (the gap this fixes) ----
+# The tester only sees the task + diff; without the resolved decisions it can FAIL a founder-approved
+# literal as a "hardcoded guess". Assert the tester prompt is augmented with the decisions.
+if ! grep -q 'formatResolvedDecisions(state.resolvedDecisions)' "${idx}"; then
+  echo "FAIL: resolved founder decisions are not computed for the loop (formatResolvedDecisions missing)." >&2
+  exit 1
+fi
+if ! grep -q 'decisionsForTester' "${idx}"; then
+  echo "FAIL: the tester prompt is not augmented with founder decisions (decisionsForTester missing)." >&2
+  exit 1
+fi
+echo "Foreman tester-sees-founder-decisions check passed"
+
 # ---- Layer 2: pending-question ledger channel round-trips ----
 node --input-type=module <<'NODE'
 import assert from "node:assert/strict";
@@ -110,6 +123,26 @@ try {
   // clearPendingQuestion is idempotent / safe when the file is already gone.
   led.clearPendingQuestion(repo, s.slug);
   assert.equal(led.readPendingQuestion(repo, s.slug), null, "clear is safe when nothing is pending");
+
+  // ---- founder decision persists across rounds (so the tester knows it's approved, not guessed) ----
+  s.state = "in_progress";
+  s.pendingDecision = undefined;
+  s.resolvedDecisions = [
+    ...(s.resolvedDecisions ?? []),
+    { round: got.round, question: got.question, decision: "Soft-steer via inject", createdAt: new Date().toISOString() },
+  ];
+  led.writeState(repo, s);
+  const afterAnswer = led.readState(repo, s.slug);
+  assert.equal(afterAnswer.resolvedDecisions?.length, 1, "resolved decision persisted on the ledger");
+  assert.equal(afterAnswer.resolvedDecisions?.[0].decision, "Soft-steer via inject", "decision text persisted");
+  assert.equal(afterAnswer.resolvedDecisions?.[0].question, got.question, "decision keeps the question it answered");
+  // It must survive a ledger wipe+restore so a restart-resumed task still tells the tester it was approved.
+  led.configureMirror(path.join(tmp, "mirror2"));
+  led.writeState(repo, afterAnswer); // re-mirror with mirror enabled
+  fs.rmSync(path.join(repo, ".pi/plans", s.slug, "state.json"));
+  led.restoreFromMirror(repo);
+  assert.equal(led.readState(repo, s.slug).resolvedDecisions?.[0].decision, "Soft-steer via inject", "decision restored from mirror");
+  led.configureMirror(null);
 
   console.log("Foreman crew escalation ledger tests passed");
 } finally {

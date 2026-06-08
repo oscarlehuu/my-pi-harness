@@ -1,0 +1,103 @@
+{
+  "summary": "Generalize the planner's idle/max timeout harness into one reusable runAgent wrapper (AbortController + idle/max timers + onActivity heartbeat + shared decide function) and apply it to developer, ui-developer fallback, tester, and reviewer in extensions/foreman/index.ts, with graceful per-role degradation (dev->failed round note, tester->fail, reviewer->inconclusive/flagged), centralized per-role FOREMAN_*_MS config, and ledger+activity timeout annotations. Planner behavior is preserved; pure decision/config helpers stay headlessly testable.",
+  "steps": [
+    "Generalize the pure timeout layer in planner.ts: add resolveAgentTimeouts(role, env) backed by a centralized per-role defaults table (FOREMAN_<ROLE>_IDLE_MS/_MAX_MS), keeping resolvePlannerTimeouts and decidePlannerTimeout exports working unchanged; add small pure degradation-mapping helpers returning {event,reason,note,degrade} for developer/tester/reviewer.",
+    "Extract index.ts:697-765 into one runAgentWithTimeout(agent, task, cwd, options, timeouts) helper returning {run, timedOut, reason}, composing the external founder-Esc signal and using onActivity for the heartbeat; keep runAgent itself a thin transport with its single centralized onActivity call site untouched.",
+    "Add a centralized AGENT_TIMEOUTS map near index.ts:78 (planner/developer/tester/reviewer) and route planner through the wrapper so it still falls back to the deterministic template plan on timeout.",
+    "Wrap developer (index.ts:1539) and ui-developer fallback (index.ts:1569) with the developer budget; on timeout route to the failed-round devContext rebuild with an 'implementer timed out (idle/max)' note and continue, respecting maxRounds and skipping verify/tester for the hung implementer.",
+    "Wrap tester (index.ts:1685); on timeout force successState 'fail' (never silently success), note it in the handoff/log, and let the existing fail path feed back to the developer.",
+    "Wrap reviewer (index.ts:1834) with the reviewer budget; on timeout synthesize decision 'unknown' so it flows through decideReviewOutcome -> proceed-but-flagged (same flaky-parse path), avoiding reopen-forever and auto-approve.",
+    "Record each timeout via writeActivity note and appendLog({type:'<role>_timed_out', round, reason}), mirroring the planner fallback annotation.",
+    "Extend extensions/foreman/test/planner_timeout_test.sh to cover resolveAgentTimeouts per-role defaults/env overrides and the degradation mapping (tester->fail, reviewer->inconclusive/flagged), preserving existing planner assertions and the single-heartbeat grep.",
+    "Run the verify gate (full headless suite) and confirm green."
+  ],
+  "filesLikely": [
+    "extensions/foreman/index.ts",
+    "extensions/foreman/planner.ts",
+    "extensions/foreman/test/planner_timeout_test.sh"
+  ],
+  "risks": [
+    "RunAgentOptions.role is planner|developer|tester only (reviewer collapses to tester); timeout-role must be passed separately or the wrong per-role budget is selected.",
+    "Developer timeout must skip verify/tester and route to the failed-round rebuild without double-incrementing the round or skipping a handoff/log, and must still terminate at maxRounds (rounds_exhausted).",
+    "Tester timeout must force fail even when verifyExit===0, otherwise the existing 'command gates passed -> success' branch would wrongly ship a hung verdict.",
+    "Reviewer timeout maps to flagged via decision 'unknown'; if an aborted runAgent returns exitCode 0 the wrapper must set 'unknown' explicitly rather than relying on a non-zero exit (needs confirming runAgent's abort exitCode/marker).",
+    "Must preserve existing planner_timeout_test.sh assertions (resolvePlannerTimeouts/decidePlannerTimeout exports and exactly one onActivity call site) or the verify gate breaks.",
+    "Degradation/config helpers must stay free of fs/pi imports to remain headlessly unit-testable, matching planner.ts's pure-layer boundary.",
+    "Centralizing in planner.ts vs a new pure module (e.g. agent_timeouts.ts) is a judgment call; chose least-churn extension of planner.ts to avoid touching unrelated wiring."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [
+      {
+        "name": "FOREMAN_PLANNER_IDLE_MS",
+        "reason": "Existing planner idle-timeout override; must keep working."
+      },
+      {
+        "name": "FOREMAN_PLANNER_MAX_MS",
+        "reason": "Existing planner max-runtime override; must keep working."
+      },
+      {
+        "name": "FOREMAN_PLANNER_TIMEOUT_MS",
+        "reason": "Legacy planner idle alias; preserve back-compat."
+      },
+      {
+        "name": "FOREMAN_DEVELOPER_IDLE_MS",
+        "reason": "New per-role developer idle override (longer default than tester/reviewer)."
+      },
+      {
+        "name": "FOREMAN_DEVELOPER_MAX_MS",
+        "reason": "New per-role developer max-runtime override."
+      },
+      {
+        "name": "FOREMAN_TESTER_IDLE_MS",
+        "reason": "New per-role tester idle override."
+      },
+      {
+        "name": "FOREMAN_TESTER_MAX_MS",
+        "reason": "New per-role tester max-runtime override."
+      },
+      {
+        "name": "FOREMAN_REVIEWER_IDLE_MS",
+        "reason": "New per-role reviewer idle override (pre-ship judge hang guard)."
+      },
+      {
+        "name": "FOREMAN_REVIEWER_MAX_MS",
+        "reason": "New per-role reviewer max-runtime override."
+      }
+    ],
+    "tools": [
+      {
+        "name": "node",
+        "reason": "Headless tests run via 'node --input-type=module' with top-level await/ESM imports."
+      },
+      {
+        "name": "bash",
+        "reason": "Test harness scripts (*.sh) and the verify gate are bash."
+      },
+      {
+        "name": "pi",
+        "reason": "runAgent spawns the pi subprocess at runtime (via piInvocation); not needed for the pure data-layer tests."
+      }
+    ],
+    "services": []
+  }
+}

@@ -59,15 +59,24 @@ import {
 	PLAN_JSON_END,
 	PLAN_JSON_START,
 	decideManifestWrite,
-	decidePlannerTimeout,
 	evaluateRequirementPresence,
 	fallbackPlannerPlan,
 	renderFounderPlan,
-	resolvePlannerTimeouts,
 	serializePlannerPlan,
 	summarizeRequirementChecks,
 	validatePlannerPlan,
 } from "./planner.ts";
+import {
+	decideAgentTimeout,
+	decideAgentTimeoutDegradation,
+	formatAgentTimeoutNote,
+	resolveAllAgentTimeouts,
+	timeoutLogType,
+	type AgentTimeoutOutcome,
+	type AgentTimeoutReason,
+	type AgentTimeoutRole,
+	type AgentTimeouts,
+} from "./agent-timeouts.ts";
 import { decideReviewOutcome, parseReviewVerdict, type ReviewVerdict } from "./reviewer.ts";
 import { evaluateDoneness, extractDonenessInputs, renderDoneChecklist } from "./done.ts";
 import { buildCommitMessage, decideShipCommit, resolveStagePaths } from "./ship.ts";
@@ -75,7 +84,7 @@ import { repoEngagementActive, setRepoEngagement } from "./engagement.ts";
 
 // Stronger model the frontend track falls back to when Gemini fails to drive the tools.
 const UI_FALLBACK_MODEL = "cliproxy/claude-opus-4-8:xhigh";
-const PLANNER_TIMEOUTS = resolvePlannerTimeouts(process.env);
+const AGENT_TIMEOUTS = resolveAllAgentTimeouts(process.env);
 
 // Durable out-of-tree ledger mirror: survives `git clean`/reset/crash inside any target repo.
 // Resolve the location from pi's agent dir and publish it via env so the ledger module finds it even
@@ -121,7 +130,7 @@ interface RunResult {
 	stderr: string;
 }
 
-type AgentRole = "planner" | "developer" | "tester";
+type AgentRole = "planner" | "developer" | "tester" | "reviewer";
 
 interface RunAgentOptions {
 	role: AgentRole;
@@ -384,14 +393,93 @@ async function runAgent(agent: AgentDef, task: string, cwd: string, options: Run
 			resolve(1);
 		});
 		if (options.signal) {
-			options.signal.addEventListener("abort", () => {
+			let killTimer: ReturnType<typeof setTimeout> | undefined;
+			const abortProc = () => {
+				if (wasAborted) return;
 				wasAborted = true;
 				proc.kill("SIGTERM");
+				killTimer = setTimeout(() => proc.kill("SIGKILL"), 5_000);
+				(killTimer as any).unref?.();
+			};
+			proc.on("close", () => {
+				if (killTimer) clearTimeout(killTimer);
+				options.signal?.removeEventListener("abort", abortProc);
 			});
+			if (options.signal.aborted) abortProc();
+			else options.signal.addEventListener("abort", abortProc, { once: true });
 		}
 	});
 	if (tmpDir) await fs.promises.rm(tmpDir, { recursive: true, force: true });
 	return { text: texts.join("\n").trim(), exitCode, stderr };
+}
+
+interface RunAgentWithTimeoutResult {
+	result: RunResult;
+	timeout: AgentTimeoutOutcome;
+}
+
+async function runAgentWithTimeout(
+	agent: AgentDef,
+	task: string,
+	cwd: string,
+	agentOptions: RunAgentOptions,
+	timeoutRole: AgentTimeoutRole = agentOptions.role === "reviewer" ? "reviewer" : agentOptions.role,
+	timeouts: AgentTimeouts = AGENT_TIMEOUTS[timeoutRole],
+): Promise<RunAgentWithTimeoutResult> {
+	const controller = new AbortController();
+	const startedAt = Date.now();
+	let lastActivityAt = startedAt;
+	let timeoutReason: AgentTimeoutReason | null = null;
+	let idleTimer: ReturnType<typeof setTimeout> | undefined;
+	let maxTimer: ReturnType<typeof setTimeout> | undefined;
+	const upstreamActivity = agentOptions.onActivity;
+	const parentSignal = agentOptions.signal;
+
+	function abortForTimeout() {
+		if (timeoutReason || controller.signal.aborted) return;
+		const decision = decideAgentTimeout({ now: Date.now(), startedAt, lastActivityAt, idleMs: timeouts.idleMs, maxMs: timeouts.maxMs });
+		if (!decision.abort || !decision.reason) {
+			scheduleIdleTimer();
+			return;
+		}
+		timeoutReason = decision.reason;
+		controller.abort();
+	}
+
+	function scheduleIdleTimer() {
+		if (idleTimer) clearTimeout(idleTimer);
+		if (timeoutReason || controller.signal.aborted) return;
+		idleTimer = setTimeout(abortForTimeout, Math.max(0, lastActivityAt + timeouts.idleMs - Date.now()));
+	}
+
+	function recordActivity() {
+		upstreamActivity?.();
+		if (timeoutReason) return;
+		lastActivityAt = Date.now();
+		scheduleIdleTimer();
+	}
+
+	const abortFromParent = () => controller.abort();
+	scheduleIdleTimer();
+	maxTimer = setTimeout(abortForTimeout, timeouts.maxMs);
+	if (parentSignal?.aborted) abortFromParent();
+	else parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+
+	try {
+		const result = await runAgent(agent, task, cwd, { ...agentOptions, signal: controller.signal, onActivity: recordActivity });
+		return { result, timeout: { timedOut: timeoutReason !== null, reason: timeoutReason } };
+	} finally {
+		if (idleTimer) clearTimeout(idleTimer);
+		if (maxTimer) clearTimeout(maxTimer);
+		parentSignal?.removeEventListener("abort", abortFromParent);
+	}
+}
+
+function recordAgentTimeout(cwd: string, slug: string, role: AgentTimeoutRole, round: number, outcome: AgentTimeoutOutcome, extra: Record<string, unknown> = {}): string | null {
+	if (!outcome.timedOut || !outcome.reason) return null;
+	const note = formatAgentTimeoutNote(role, outcome.reason, AGENT_TIMEOUTS[role]);
+	appendLog(cwd, slug, { type: timeoutLogType(role), round, reason: outcome.reason, note, ...extra });
+	return note;
 }
 
 function extractJsonBlock(text: string, startMarker: string, endMarker: string): any | null {
@@ -694,50 +782,16 @@ async function draftPlannerPlan(input: {
 		pid: process.pid,
 		ownerSessionId: input.ownerSessionId,
 	});
-	const { idleMs, maxMs } = PLANNER_TIMEOUTS;
-	const controller = new AbortController();
-	const startedAt = Date.now();
-	let lastActivityAt = startedAt;
-	let timeoutReason: "idle" | "max" | null = null;
 	let finalActivityNote = "planner finished";
-	let idleTimer: ReturnType<typeof setTimeout> | undefined;
-	let maxTimer: ReturnType<typeof setTimeout> | undefined;
-	const timeoutNote = (reason: "idle" | "max") =>
-		reason === "idle" ? `planner idle-timed-out after ${idleMs}ms (no activity)` : `planner hit max runtime ${maxMs}ms`;
-	function abortForTimeout() {
-		if (timeoutReason || controller.signal.aborted) return;
-		const decision = decidePlannerTimeout({ now: Date.now(), startedAt, lastActivityAt, idleMs, maxMs });
-		if (!decision.abort || !decision.reason) {
-			scheduleIdleTimer();
-			return;
-		}
-		timeoutReason = decision.reason;
-		controller.abort();
-	}
-	function scheduleIdleTimer() {
-		if (idleTimer) clearTimeout(idleTimer);
-		if (timeoutReason || controller.signal.aborted) return;
-		idleTimer = setTimeout(abortForTimeout, Math.max(0, lastActivityAt + idleMs - Date.now()));
-	}
-	function recordPlannerActivity() {
-		if (timeoutReason) return;
-		lastActivityAt = Date.now();
-		scheduleIdleTimer();
-	}
-	scheduleIdleTimer();
-	maxTimer = setTimeout(abortForTimeout, maxMs);
-	const abortPlanner = () => controller.abort();
-	input.signal?.addEventListener("abort", abortPlanner, { once: true });
 	try {
-		const run = await runAgent(planner, plannerTaskFor(input), input.cwd, {
+		const { result: run, timeout } = await runAgentWithTimeout(planner, plannerTaskFor(input), input.cwd, {
 			role: "planner",
 			round: 0,
 			transcriptPath,
-			signal: controller.signal,
-			onActivity: recordPlannerActivity,
+			signal: input.signal,
 		});
-		if (timeoutReason) {
-			const note = timeoutNote(timeoutReason);
+		if (timeout.timedOut && timeout.reason) {
+			const note = recordAgentTimeout(input.cwd, input.slug, "planner", 0, timeout) ?? formatAgentTimeoutNote("planner", timeout.reason, AGENT_TIMEOUTS.planner);
 			finalActivityNote = `planner fallback: ${note}`;
 			return { plan: fallback(), source: "fallback", note };
 		}
@@ -756,13 +810,10 @@ async function draftPlannerPlan(input: {
 		finalActivityNote = "planner complete";
 		return { plan: parsed, source: "planner" };
 	} catch (error) {
-		const note = timeoutReason ? timeoutNote(timeoutReason) : `planner failed: ${String(error)}`;
+		const note = `planner failed: ${String(error)}`;
 		finalActivityNote = `planner fallback: ${note}`;
 		return { plan: fallback(), source: "fallback", note };
 	} finally {
-		if (idleTimer) clearTimeout(idleTimer);
-		if (maxTimer) clearTimeout(maxTimer);
-		input.signal?.removeEventListener("abort", abortPlanner);
 		writeActivity(input.cwd, input.slug, {
 			round: 0,
 			phase: "idle",
@@ -1536,22 +1587,26 @@ export default function (pi: ExtensionAPI) {
 				// loses them. Idempotent: the resume branch may already include the latest answer in prose.
 				const decisionsForDev = formatResolvedDecisions(state.resolvedDecisions);
 				const devContextWithDecisions = decisionsForDev ? `${devContext}\n\n${decisionsForDev}` : devContext;
-				let devRun = await runAgent(developer, devContextWithDecisions, cwd, {
+				let implementerTimeout: AgentTimeoutOutcome = { timedOut: false, reason: null };
+				let implementerTimeoutRole: AgentTimeoutRole = "developer";
+				let devOutcome = await runAgentWithTimeout(developer, devContextWithDecisions, cwd, {
 					role: "developer",
 					round,
 					transcriptPath: devTranscript,
 					signal,
 					slug,
 				});
+				let devRun = devOutcome.result;
+				if (devOutcome.timeout.timedOut) implementerTimeout = devOutcome.timeout;
 				stopSpinner();
-				let devBlock = extractJsonBlock(devRun.text, "---DEV-JSON---", "---END-DEV-JSON---");
+				let devBlock = implementerTimeout.timedOut ? null : extractJsonBlock(devRun.text, "---DEV-JSON---", "---END-DEV-JSON---");
 
 				// ---- UI-DEVELOPER FALLBACK (frontend track only) ----
 				// Gemini has taste but is flaky at tool-calling; if it errored, skipped the machine block,
 				// or changed nothing on disk, re-run THIS round once with a stronger model (Opus xhigh).
 				// Skip the fallback when the dev escalated a question: an empty tree is then intentional
 				// (it stopped to ask), not a flaky no-op, and re-running would burn Opus and likely re-ask.
-				if (track === "frontend" && !signal.aborted && !readPendingQuestion(cwd, slug)) {
+				if (!implementerTimeout.timedOut && track === "frontend" && !signal.aborted && !readPendingQuestion(cwd, slug)) {
 					const reason = devFallbackReason(devRun, devBlock != null, treeBefore, workingTreeSnapshot(cwd));
 					if (reason) {
 						appendLog(cwd, slug, { type: "ui_fallback", round, reason, from: developer.model ?? "default", to: UI_FALLBACK_MODEL });
@@ -1566,28 +1621,66 @@ export default function (pi: ExtensionAPI) {
 						});
 						pushStatus();
 						startSpinner();
-						devRun = await runAgent({ ...developer, model: UI_FALLBACK_MODEL }, devContextWithDecisions, cwd, {
-							role: "developer",
-							round,
-							transcriptPath: devTranscript,
-							signal,
-							slug,
-						});
+						devOutcome = await runAgentWithTimeout(
+							{ ...developer, model: UI_FALLBACK_MODEL },
+							devContextWithDecisions,
+							cwd,
+							{
+								role: "developer",
+								round,
+								transcriptPath: devTranscript,
+								signal,
+								slug,
+							},
+							"ui-developer",
+						);
+						devRun = devOutcome.result;
+						if (devOutcome.timeout.timedOut) {
+							implementerTimeout = devOutcome.timeout;
+							implementerTimeoutRole = "ui-developer";
+						}
 						stopSpinner();
-						devBlock = extractJsonBlock(devRun.text, "---DEV-JSON---", "---END-DEV-JSON---");
+						devBlock = implementerTimeout.timedOut ? null : extractJsonBlock(devRun.text, "---DEV-JSON---", "---END-DEV-JSON---");
 					}
 				}
+				const implementerTimeoutDegradation = decideAgentTimeoutDegradation(
+					implementerTimeoutRole,
+					implementerTimeout,
+					AGENT_TIMEOUTS[implementerTimeoutRole],
+				);
+				const implementerTimeoutNote = implementerTimeout.timedOut
+					? (recordAgentTimeout(cwd, slug, implementerTimeoutRole, round, implementerTimeout) ?? implementerTimeoutDegradation.note)
+					: null;
 				const devHandoff: Handoff = {
 					timestamp: new Date().toISOString(),
 					role: "developer",
 					round,
 					sessionId: devSession,
-					summary: devBlock?.summary ?? "(no structured summary)",
+					summary: devBlock?.summary ?? implementerTimeoutNote ?? "(no structured summary)",
 					filesChanged: devBlock?.filesChanged,
 					howToVerify: devBlock?.howToVerify,
-					raw: devRun.text,
+					raw: implementerTimeoutNote ? `${implementerTimeoutNote}\n\n${devRun.text || devRun.stderr || "(no implementer output)"}` : devRun.text,
 				};
 				writeHandoff(cwd, slug, devHandoff);
+
+				if (implementerTimeout.timedOut) {
+					const retryNote = implementerTimeoutNote ?? `${implementerTimeoutRole} timed out (${implementerTimeout.reason ?? "unknown"})`;
+					writeActivity(cwd, slug, {
+						round,
+						phase: "idle",
+						activeTranscript: path.basename(devTranscript),
+						note: `implementer timeout: ${retryNote}`.slice(0, 500),
+						pid: process.pid,
+						ownerSessionId: sessionId,
+					});
+					pushStatus();
+					emit(`Round ${round}: implementer timed out (${implementerTimeout.reason ?? "unknown"}); retrying if rounds remain.`);
+					devContext =
+						`Continue task in ${cwd}: ${state.task}\n\n` +
+						`Round ${round} FAILED before verification because the implementer timed out (${implementerTimeout.reason ?? "unknown"}).\n` +
+						`${retryNote}\n\nInspect the current tree, keep any useful partial work, and finish the task.`;
+					continue;
+				}
 
 				// ---- CREW ESCALATION GATE: developer raised a question it couldn't decide ----
 				// The crew can't block on the founder, so it recorded a question and stopped. Pause the loop
@@ -1682,14 +1775,21 @@ export default function (pi: ExtensionAPI) {
 				});
 				pushStatus();
 				startSpinner();
-				const testRun = await runAgent(tester, testerTask, cwd, {
+				const testOutcome = await runAgentWithTimeout(tester, testerTask, cwd, {
 					role: "tester",
 					round,
 					transcriptPath: testTranscript,
 					signal,
+					slug,
 				});
+				const testRun = testOutcome.result;
+				const testerTimeout = testOutcome.timeout;
+				const testerTimeoutDegradation = decideAgentTimeoutDegradation("tester", testerTimeout, AGENT_TIMEOUTS.tester);
+				const testerTimeoutNote = testerTimeout.timedOut ? (recordAgentTimeout(cwd, slug, "tester", round, testerTimeout) ?? testerTimeoutDegradation.note) : null;
 				stopSpinner();
-				const { successState: judged, parsedFrom } = parseVerdict(testRun.text);
+				const { successState: judged, parsedFrom } = testerTimeout.timedOut
+					? { successState: testerTimeoutDegradation.successState ?? "fail", parsedFrom: `tester-timeout-${testerTimeout.reason ?? "unknown"}` }
+					: parseVerdict(testRun.text);
 
 				// Combine ground truth (exit code) with the tester's judgment.
 				let successState: SuccessState;
@@ -1703,11 +1803,12 @@ export default function (pi: ExtensionAPI) {
 					successState = judged;
 				}
 
-				const summaryLine =
-					testRun.text
-						.split("\n")
-						.map((l) => l.trim())
-						.filter((l) => l && !/^VERDICT:/i.test(l))[0] ?? "(no summary)";
+				const summaryLine = testerTimeoutNote
+					? testerTimeoutNote
+					: (testRun.text
+							.split("\n")
+							.map((l) => l.trim())
+							.filter((l) => l && !/^VERDICT:/i.test(l))[0] ?? "(no summary)");
 				const testHandoff: Handoff = {
 					timestamp: new Date().toISOString(),
 					role: "tester",
@@ -1724,10 +1825,10 @@ export default function (pi: ExtensionAPI) {
 								})),
 							}
 						: undefined,
-					raw: testRun.text,
+					raw: testerTimeoutNote ? `${testerTimeoutNote}\n\n${testRun.text || testRun.stderr || "(no tester output)"}` : testRun.text,
 				};
 				writeHandoff(cwd, slug, testHandoff);
-				appendLog(cwd, slug, { type: "verdict", round, successState, verifyExit, parsedFrom });
+				appendLog(cwd, slug, { type: "verdict", round, successState, verifyExit, parsedFrom, timedOut: testerTimeout.timedOut ? true : undefined, timeoutReason: testerTimeout.reason ?? undefined });
 				state.lastReviewedHandoffCount = listHandoffs(cwd, slug).length;
 				writeState(cwd, state);
 
@@ -1817,7 +1918,7 @@ export default function (pi: ExtensionAPI) {
 							emit(`Round ${round}: pre-ship judge ${gate.name} (${reviewerAgentName})...`);
 							appendLog(cwd, slug, { type: "pre_ship_reviewer_started", round, gate: gate.name, agent: reviewerAgentName });
 							const reviewSession = randomUUID();
-							const reviewTranscript = transcriptFilePath(cwd, slug, "tester", round, reviewSession);
+							const reviewTranscript = transcriptFilePath(cwd, slug, "reviewer", round, reviewSession);
 							writeActivity(cwd, slug, {
 								round,
 								phase: "tester",
@@ -1829,9 +1930,11 @@ export default function (pi: ExtensionAPI) {
 							pushStatus();
 							startSpinner();
 							let reviewRun: RunResult;
+							let reviewerTimeout: AgentTimeoutOutcome = { timedOut: false, reason: null };
+							let reviewerTimeoutNote: string | null = null;
 							try {
 								const reviewAgent = loadAgent(reviewerAgentName);
-								reviewRun = await runAgent(
+								const reviewOutcome = await runAgentWithTimeout(
 									reviewAgent,
 									reviewerTaskFor({
 										cwd,
@@ -1842,8 +1945,14 @@ export default function (pi: ExtensionAPI) {
 										preShipCommandSummary: preShipCommandSummaryLines.join("\n"),
 									}),
 									cwd,
-									{ role: "tester", round, transcriptPath: reviewTranscript, signal },
+									{ role: "reviewer", round, transcriptPath: reviewTranscript, signal, slug },
 								);
+								reviewRun = reviewOutcome.result;
+								reviewerTimeout = reviewOutcome.timeout;
+								const reviewerTimeoutDegradation = decideAgentTimeoutDegradation("reviewer", reviewerTimeout, AGENT_TIMEOUTS.reviewer);
+								reviewerTimeoutNote = reviewerTimeout.timedOut
+									? (recordAgentTimeout(cwd, slug, "reviewer", round, reviewerTimeout, { gate: gate.name, agent: reviewerAgentName }) ?? reviewerTimeoutDegradation.note)
+									: null;
 							} catch (error) {
 								reviewRun = { text: `Reviewer gate "${gate.name}" could not run: ${String(error)}`, exitCode: 1, stderr: String(error) };
 							} finally {
@@ -1851,8 +1960,11 @@ export default function (pi: ExtensionAPI) {
 							}
 
 							const parsedReview = parseReviewVerdict(reviewRun.text);
-							const review: ReviewVerdict =
-								reviewRun.exitCode === 0 || parsedReview.decision === "request-changes" ? parsedReview : { ...parsedReview, decision: "unknown" };
+							const review: ReviewVerdict = reviewerTimeout.timedOut
+								? { ...parsedReview, decision: "unknown" }
+								: reviewRun.exitCode === 0 || parsedReview.decision === "request-changes"
+									? parsedReview
+									: { ...parsedReview, decision: "unknown" };
 							const reviewDecision = decideReviewOutcome(review);
 							// Handoff.role intentionally remains "tester" to avoid a ledger schema change;
 							// the summary prefix and explicit pre_ship_reviewer_* log events distinguish reviewer output.
@@ -1863,7 +1975,9 @@ export default function (pi: ExtensionAPI) {
 								sessionId: reviewSession,
 								successState: reviewSuccessState(review),
 								summary: `[reviewer] ${gate.name}: ${review.decision}${reviewDecision.flagged ? " (inconclusive)" : ""}`.slice(0, 200),
-								raw: reviewRun.text || `(no reviewer output; stderr: ${reviewRun.stderr})`,
+								raw: reviewerTimeoutNote
+									? `${reviewerTimeoutNote}\n\n${reviewRun.text || reviewRun.stderr || "(no reviewer output)"}`
+									: reviewRun.text || `(no reviewer output; stderr: ${reviewRun.stderr})`,
 							};
 							writeHandoff(cwd, slug, reviewHandoff);
 							appendLog(cwd, slug, {
@@ -1876,6 +1990,8 @@ export default function (pi: ExtensionAPI) {
 								action: reviewDecision.action,
 								blocking: review.blocking,
 								nits: review.nits,
+								timedOut: reviewerTimeout.timedOut ? true : undefined,
+								timeoutReason: reviewerTimeout.reason ?? undefined,
 							});
 							state.lastReviewedHandoffCount = listHandoffs(cwd, slug).length;
 							writeState(cwd, state);
@@ -1898,8 +2014,23 @@ export default function (pi: ExtensionAPI) {
 
 							if (reviewDecision.flagged) {
 								// Unknown reviewer output is not approval, but reopening would burn all rounds on
-								// a flaky parse. Proceed to Gate 2 flagged so the founder makes the ship decision.
-								preShipSummaryLines.push("  ⚠ Reviewer output was inconclusive; inspect the [reviewer] handoff before approving ship.");
+								// a flaky parse/timeout. Proceed to Gate 2 flagged so the founder makes the ship decision.
+								preShipSummaryLines.push(
+									reviewerTimeoutNote
+										? `  ⚠ Reviewer timed out (${reviewerTimeout.reason ?? "unknown"}); inspect the [reviewer] handoff before approving ship.`
+										: "  ⚠ Reviewer output was inconclusive; inspect the [reviewer] handoff before approving ship.",
+								);
+								if (reviewerTimeoutNote) {
+									writeActivity(cwd, slug, {
+										round,
+										phase: "idle",
+										activeTranscript: path.basename(reviewTranscript),
+										note: `reviewer timeout: ${reviewerTimeoutNote}`.slice(0, 500),
+										pid: process.pid,
+										ownerSessionId: sessionId,
+									});
+									pushStatus();
+								}
 							}
 							emit(`Round ${round}: pre-ship judge ${gate.name} ${review.decision.toUpperCase()}.`);
 						}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Headless unit test for Foreman planner timeout helpers.
-# Pure data-layer (no pi, no agents, no TTY) — validates dynamic idle/max timeout decisions.
+# Headless unit test for Foreman crew timeout helpers.
+# Pure data-layer (no pi, no agents, no TTY) — validates dynamic idle/max timeout decisions and degradation mapping.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const planner = await import(pathToFileURL(`${process.env.ROOT_DIR}/extensions/foreman/planner.ts`).href);
+const timeouts = await import(pathToFileURL(`${process.env.ROOT_DIR}/extensions/foreman/agent-timeouts.ts`).href);
 const indexSource = readFileSync(`${process.env.ROOT_DIR}/extensions/foreman/index.ts`, "utf8");
 const onLineStart = indexSource.indexOf("\t\tconst onLine = (line: string) => {");
 assert.notEqual(onLineStart, -1, "runAgent has an onLine stream handler");
@@ -51,7 +52,14 @@ assert.deepEqual(
   "when both idle and max are exceeded, max has precedence",
 );
 
-assert.deepEqual(planner.resolvePlannerTimeouts({}), { idleMs: 90_000, maxMs: 300_000 }, "defaults are 90s idle / 5m max");
+assert.ok(indexSource.includes("async function runAgentWithTimeout"), "generalized runAgent timeout wrapper exists");
+assert.ok(indexSource.includes("timeoutLogType(role)"), "timeouts are recorded through per-role ledger event names");
+
+assert.deepEqual(planner.resolvePlannerTimeouts({}), { idleMs: 90_000, maxMs: 300_000 }, "planner defaults stay 90s idle / 5m max");
+assert.deepEqual(timeouts.resolveAgentTimeouts({}, "developer"), { idleMs: 180_000, maxMs: 900_000 }, "developer default budget is longer");
+assert.deepEqual(timeouts.resolveAgentTimeouts({}, "ui-developer"), { idleMs: 180_000, maxMs: 900_000 }, "ui-developer fallback default budget is longer");
+assert.deepEqual(timeouts.resolveAgentTimeouts({}, "tester"), { idleMs: 90_000, maxMs: 300_000 }, "tester default budget is bounded like planner");
+assert.deepEqual(timeouts.resolveAgentTimeouts({}, "reviewer"), { idleMs: 90_000, maxMs: 300_000 }, "reviewer default budget is bounded like planner");
 assert.deepEqual(
   planner.resolvePlannerTimeouts({ FOREMAN_PLANNER_IDLE_MS: "12000", FOREMAN_PLANNER_MAX_MS: "120000" }),
   { idleMs: 12_000, maxMs: 120_000 },
@@ -76,6 +84,65 @@ assert.deepEqual(
   planner.resolvePlannerTimeouts({ FOREMAN_PLANNER_IDLE_MS: "5000", FOREMAN_PLANNER_MAX_MS: "4000" }),
   { idleMs: 5_000, maxMs: 5_000 },
   "max is raised to idle when max override is smaller",
+);
+assert.deepEqual(
+  timeouts.resolveAgentTimeouts({ FOREMAN_DEVELOPER_IDLE_MS: "240000", FOREMAN_DEVELOPER_MAX_MS: "1200000" }, "developer"),
+  { idleMs: 240_000, maxMs: 1_200_000 },
+  "developer per-role env overrides are honored",
+);
+assert.deepEqual(
+  timeouts.resolveAgentTimeouts({ FOREMAN_UI_DEVELOPER_IDLE_MS: "210000", FOREMAN_UI_DEVELOPER_MAX_MS: "600000" }, "ui-developer"),
+  { idleMs: 210_000, maxMs: 600_000 },
+  "ui-developer fallback per-role env overrides are honored",
+);
+assert.deepEqual(
+  timeouts.resolveAgentTimeouts({ FOREMAN_TESTER_IDLE_MS: "45000", FOREMAN_TESTER_MAX_MS: "180000" }, "tester"),
+  { idleMs: 45_000, maxMs: 180_000 },
+  "tester per-role env overrides are honored",
+);
+assert.deepEqual(
+  timeouts.resolveAgentTimeouts({ FOREMAN_REVIEWER_IDLE_MS: "60000", FOREMAN_REVIEWER_MAX_MS: "240000" }, "reviewer"),
+  { idleMs: 60_000, maxMs: 240_000 },
+  "reviewer per-role env overrides are honored",
+);
+assert.deepEqual(
+  timeouts.timeoutEnvKeys("ui-developer"),
+  { idle: "FOREMAN_UI_DEVELOPER_IDLE_MS", max: "FOREMAN_UI_DEVELOPER_MAX_MS" },
+  "hyphenated ui-developer role maps to usable env var names",
+);
+assert.deepEqual(
+  timeouts.decideAgentTimeout({ now: 10_001, startedAt: 0, lastActivityAt: 0, idleMs: 10_000, maxMs: 60_000 }),
+  { abort: true, reason: "idle" },
+  "generalized timeout decision covers non-planner roles",
+);
+
+const idleOutcome = { timedOut: true, reason: "idle" };
+assert.deepEqual(
+  timeouts.decideAgentTimeoutDegradation("planner", idleOutcome).action,
+  "planner-fallback",
+  "planner timeout still maps to fallback plan",
+);
+assert.deepEqual(
+  timeouts.decideAgentTimeoutDegradation("developer", idleOutcome).action,
+  "retry-developer-round",
+  "developer timeout maps to a failed dev attempt / retry",
+);
+assert.deepEqual(
+  timeouts.decideAgentTimeoutDegradation("ui-developer", { timedOut: true, reason: "max" }).action,
+  "retry-developer-round",
+  "ui-developer fallback timeout maps to a failed dev attempt / retry",
+);
+const testerDegradation = timeouts.decideAgentTimeoutDegradation("tester", idleOutcome);
+assert.equal(testerDegradation.action, "fail-tester-verdict", "tester timeout maps to non-success verdict");
+assert.equal(testerDegradation.successState, "fail", "tester timeout is fail, never success");
+const reviewerDegradation = timeouts.decideAgentTimeoutDegradation("reviewer", idleOutcome);
+assert.equal(reviewerDegradation.action, "flag-reviewer-inconclusive", "reviewer timeout maps to inconclusive pre-ship review");
+assert.equal(reviewerDegradation.reviewDecision, "unknown", "reviewer timeout records UNKNOWN decision");
+assert.equal(reviewerDegradation.flagged, true, "reviewer timeout is flagged for Gate 2 rather than auto-approved");
+assert.deepEqual(
+  timeouts.decideAgentTimeoutDegradation("tester", { timedOut: false, reason: null }),
+  { action: "none", note: "" },
+  "non-timeout has no degradation",
 );
 
 console.log("Foreman planner timeout helper tests passed");

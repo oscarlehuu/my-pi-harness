@@ -26,6 +26,24 @@ assert.match(
   "orchestrator parses planner output with the shared extractJsonBlock helper",
 );
 assert.doesNotMatch(foremanIndex, /parsePlannerPlanJson\(run\.text\)/, "orchestrator does not parse planner output via the planner helper");
+
+// Regression: extractJsonBlock must pick the block that actually parses, not the first marker.
+// A planner reasoning ABOUT the PLAN-JSON contract emits the markers in prose before the real block;
+// the old first-marker-only logic grabbed prose and fell back. Load the real function body from source
+// and exercise it against a 3-marker fixture (two prose mentions + one real block).
+const extractFnMatch = foremanIndex.match(/function extractJsonBlock\(text: string, startMarker: string, endMarker: string\): any \| null \{([\s\S]*?)\n\}/);
+assert.ok(extractFnMatch, "extractJsonBlock function body is locatable in index.ts");
+const extractJsonBlock = new Function("text", "startMarker", "endMarker", extractFnMatch[1].replace(/:\s*string/g, "").replace(/:\s*any\s*\|\s*null/g, ""));
+const S = "---PLAN-JSON---";
+const E = "---END-PLAN-JSON---";
+const threeMarkerText =
+  "I will update the " + S + " example block in planner.md (prose mention, no JSON).\n" +
+  S + "\n" + JSON.stringify({ summary: "real block", steps: ["do it"] }) + "\n" + E + "\n" +
+  "Also note the " + S + " contract gains new keys (another prose mention).";
+const extracted = extractJsonBlock(threeMarkerText, S, E);
+assert.ok(extracted && extracted.summary === "real block", "extractJsonBlock skips prose marker mentions and returns the parseable block");
+assert.equal(extractJsonBlock("no markers here", S, E), null, "extractJsonBlock returns null when no block parses");
+assert.equal(extractJsonBlock(`${S}\nnot json\n${E}`, S, E), null, "extractJsonBlock returns null when the only block is invalid JSON");
 assert.match(foremanIndex, /function toolOnPath\(name: string\)/, "orchestrator owns side-effect-free tool presence checks");
 assert.match(foremanIndex, /loadRequirements\(cwd\)/, "orchestrator preflights persisted requirements");
 assert.match(foremanIndex, /type: "preflight_checked"/, "orchestrator records requirement preflight checks");

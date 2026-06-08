@@ -483,13 +483,24 @@ function recordAgentTimeout(cwd: string, slug: string, role: AgentTimeoutRole, r
 }
 
 function extractJsonBlock(text: string, startMarker: string, endMarker: string): any | null {
-	const s = text.indexOf(startMarker);
-	const e = text.indexOf(endMarker);
-	if (s === -1 || e === -1 || e < s) return null;
-	try {
-		return JSON.parse(text.slice(s + startMarker.length, e).trim());
-	} catch {
-		return null;
+	// A crew message can contain the markers more than once: agents reasoning ABOUT the contract
+	// (e.g. a task that edits the PLAN-JSON contract itself) mention the markers in prose before the
+	// real block. Don't assume the first start..first end pair is the payload — scan every start
+	// marker against the next end marker after it and return the first slice that actually parses as
+	// JSON. This makes the parser robust to prose mentions while still preferring the earliest valid block.
+	let from = 0;
+	while (true) {
+		const s = text.indexOf(startMarker, from);
+		if (s === -1) return null;
+		const contentStart = s + startMarker.length;
+		const e = text.indexOf(endMarker, contentStart);
+		if (e === -1) return null;
+		try {
+			return JSON.parse(text.slice(contentStart, e).trim());
+		} catch {
+			// Not the real block (prose mention); advance past this start marker and try the next one.
+			from = contentStart;
+		}
 	}
 }
 

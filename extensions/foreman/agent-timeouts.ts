@@ -47,13 +47,16 @@ export interface AgentTimeoutDegradation {
 export const AGENT_TIMEOUT_ROLES: AgentTimeoutRole[] = ["planner", "developer", "ui-developer", "tester", "reviewer"];
 
 // Defaults are intentionally visible in one place. Developer/UI get longer budgets because they
-// may edit and run local checks; tester/reviewer should be bounded like the planner.
+// may edit and run local checks. The reviewer also needs a generous budget: it runs an xhigh model
+// and does heavy read-only recon (reads the whole diff, traces dependents, 15+ tool calls), so it is
+// bounded like the developer rather than the lightweight tester — a too-tight budget made it idle/max
+// out before it could emit its REVIEW verdict, blocking ship on strict DoD.
 export const DEFAULT_AGENT_TIMEOUTS_MS: Record<AgentTimeoutRole, AgentTimeouts> = {
 	planner: { idleMs: 90_000, maxMs: 300_000 },
 	developer: { idleMs: 180_000, maxMs: 900_000 },
 	"ui-developer": { idleMs: 180_000, maxMs: 900_000 },
 	tester: { idleMs: 90_000, maxMs: 300_000 },
-	reviewer: { idleMs: 90_000, maxMs: 300_000 },
+	reviewer: { idleMs: 180_000, maxMs: 720_000 },
 };
 
 export const MIN_AGENT_IDLE_MS = 1_000;

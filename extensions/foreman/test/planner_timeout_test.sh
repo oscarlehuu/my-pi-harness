@@ -59,7 +59,7 @@ assert.deepEqual(planner.resolvePlannerTimeouts({}), { idleMs: 90_000, maxMs: 30
 assert.deepEqual(timeouts.resolveAgentTimeouts({}, "developer"), { idleMs: 180_000, maxMs: 900_000 }, "developer default budget is longer");
 assert.deepEqual(timeouts.resolveAgentTimeouts({}, "ui-developer"), { idleMs: 180_000, maxMs: 900_000 }, "ui-developer fallback default budget is longer");
 assert.deepEqual(timeouts.resolveAgentTimeouts({}, "tester"), { idleMs: 90_000, maxMs: 300_000 }, "tester default budget is bounded like planner");
-assert.deepEqual(timeouts.resolveAgentTimeouts({}, "reviewer"), { idleMs: 90_000, maxMs: 300_000 }, "reviewer default budget is bounded like planner");
+assert.deepEqual(timeouts.resolveAgentTimeouts({}, "reviewer"), { idleMs: 180_000, maxMs: 720_000 }, "reviewer default budget is generous (xhigh + heavy recon), bounded like the developer");
 assert.deepEqual(
   planner.resolvePlannerTimeouts({ FOREMAN_PLANNER_IDLE_MS: "12000", FOREMAN_PLANNER_MAX_MS: "120000" }),
   { idleMs: 12_000, maxMs: 120_000 },

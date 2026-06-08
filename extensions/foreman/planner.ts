@@ -337,7 +337,7 @@ function formatGate(gate: Gate): string {
 	return `- ${gate.name} (${gate.stage} ${gate.kind})${gatePayload(gate)}`;
 }
 
-function hasContent(lines: unknown[] | undefined): lines is unknown[] {
+function hasContent<T>(lines: T[] | undefined): lines is T[] {
 	return Array.isArray(lines) && lines.length > 0;
 }
 

@@ -1918,7 +1918,10 @@ export default function (pi: ExtensionAPI) {
 							emit(`Round ${round}: pre-ship judge ${gate.name} (${reviewerAgentName})...`);
 							appendLog(cwd, slug, { type: "pre_ship_reviewer_started", round, gate: gate.name, agent: reviewerAgentName });
 							const reviewSession = randomUUID();
-							const reviewTranscript = transcriptFilePath(cwd, slug, "reviewer", round, reviewSession);
+							// Transcript role stays "tester": the reviewer Handoff.role is intentionally "tester"
+							// (index.ts ~1969), so the dashboard's sessionId-exact transcriptForRun lookup only matches
+							// a tester-roled transcript. Live reviewer detection uses the activity note/phase, not this role.
+							const reviewTranscript = transcriptFilePath(cwd, slug, "tester", round, reviewSession);
 							writeActivity(cwd, slug, {
 								round,
 								phase: "tester",

@@ -18,6 +18,12 @@ assert.match(plannerPrompt, /^model: cliproxy\/claude-opus-4-8:xhigh$/m, "planne
 assert.match(plannerPrompt, /^tools: read, grep, find, ls, bash$/m, "planner tools are read-only recon tools");
 assert.match(plannerPrompt, /Propose gates only for commands that actually exist in the repo\./, "planner prompt requires real repo commands");
 assert.match(plannerPrompt, /requirements/, "planner prompt asks for task requirements");
+assert.match(plannerPrompt, /understanding/, "planner prompt asks for founder-facing understanding");
+assert.match(plannerPrompt, /assumptions/, "planner prompt asks for explicit assumptions");
+assert.match(plannerPrompt, /nonGoals/, "planner prompt asks for explicit non-goals");
+assert.match(plannerPrompt, /alternatives/, "planner prompt asks for rejected alternatives");
+assert.match(plannerPrompt, /blastRadius/, "planner prompt asks for blast-radius impact");
+assert.match(plannerPrompt, /YAGNI\/KISS\/DRY\/scale-maintain as a self-critique lens/, "planner prompt frames design principles as a lens");
 assert.match(plannerPrompt, /NEVER read, echo, or store secret VALUES/, "planner prompt forbids secret value handling");
 assert.doesNotMatch(plannerPrompt, /proposedManifest|explicitly provided by the CTO/, "planner prompt has no legacy proposedManifest/CTO override contract");
 assert.match(
@@ -72,6 +78,11 @@ assert.deepEqual(parsed.steps, ["Inspect current Gate 1", "Wire planner fallback
 assert.deepEqual(parsed.filesLikely, ["extensions/foreman/index.ts", "extensions/foreman/planner.ts"]);
 assert.deepEqual(parsed.proposedGates, [verifyGate, lintGate]);
 assert.deepEqual(parsed.requirements, emptyRequirements, "plans without requirements default to empty requirements");
+assert.equal(parsed.understanding, undefined, "plans without understanding keep it undefined for back-compat");
+assert.deepEqual(parsed.assumptions, [], "plans without assumptions default to an empty list");
+assert.deepEqual(parsed.nonGoals, [], "plans without nonGoals default to an empty list");
+assert.deepEqual(parsed.alternatives, [], "plans without alternatives default to an empty list");
+assert.deepEqual(parsed.blastRadius, [], "plans without blastRadius default to an empty list");
 const legacyManifestKey = "proposed" + "Manifest";
 assert.equal(legacyManifestKey in parsed, false, "planner plans do not model legacy manifest proposals");
 
@@ -122,6 +133,49 @@ const requirementsPlan = planner.validatePlannerPlan({
 assert.ok(requirementsPlan, "plans with requirements validate");
 assert.deepEqual(requirementsPlan.requirements, taskRequirements, "requirements normalize on planner validation");
 
+const understandingPlan = planner.validatePlannerPlan({
+  summary: "Expose Gate 1 understanding.",
+  understanding: " Founder wants Gate 1 to show the task interpretation before code runs. ",
+  assumptions: [
+    { text: " Planner helper stays pure and data-only. ", confidence: " HIGH " },
+    { text: " Invalid confidence is dropped but the assumption remains. ", confidence: "certain" },
+    { text: " " },
+    "not an assumption",
+  ],
+  nonGoals: [" Change the dev/test/review loop ", " ", 42],
+  alternatives: [
+    { approach: " Keep only summary and risks ", rejectedReason: " It would not expose the requested understanding layer. " },
+    { approach: " Rewrite the gates engine ", rejectedReason: " Out of scope for a planner data-layer-only task. " },
+    { approach: " Render without validation " },
+    "not an alternative",
+  ],
+  blastRadius: [" Gate 1 markdown rendering ", "Planner prompt contract", null],
+  steps: ["Inspect planner helpers", "Update prompt and tests"],
+  filesLikely: ["extensions/foreman/planner.ts"],
+  risks: ["Empty sections must not clutter Gate 1"],
+  proposedGates: [],
+});
+assert.ok(understandingPlan, "plans with understanding-layer fields validate");
+assert.equal(understandingPlan.understanding, "Founder wants Gate 1 to show the task interpretation before code runs.", "understanding normalizes whitespace");
+assert.deepEqual(
+  understandingPlan.assumptions,
+  [
+    { text: "Planner helper stays pure and data-only.", confidence: "high" },
+    { text: "Invalid confidence is dropped but the assumption remains." },
+  ],
+  "assumptions normalize text, coerce valid confidence, and drop malformed/bad confidence values",
+);
+assert.deepEqual(understandingPlan.nonGoals, ["Change the dev/test/review loop"], "nonGoals normalize string lists");
+assert.deepEqual(
+  understandingPlan.alternatives,
+  [
+    { approach: "Keep only summary and risks", rejectedReason: "It would not expose the requested understanding layer." },
+    { approach: "Rewrite the gates engine", rejectedReason: "Out of scope for a planner data-layer-only task." },
+  ],
+  "alternatives require approach and rejectedReason; malformed entries are dropped",
+);
+assert.deepEqual(understandingPlan.blastRadius, ["Gate 1 markdown rendering", "Planner prompt contract"], "blastRadius normalizes string lists");
+
 const fallback = planner.fallbackPlannerPlan({
   task: "Fix calc.add",
   cwd: "/tmp/repo",
@@ -132,6 +186,11 @@ const fallback = planner.fallbackPlannerPlan({
 });
 assert.match(fallback.summary, /backend track/, "fallback mentions track");
 assert.deepEqual(fallback.filesLikely, [], "fallback does not guess files");
+assert.equal(fallback.understanding, undefined, "fallback leaves understanding empty when no planner model interpretation exists");
+assert.deepEqual(fallback.assumptions, [], "fallback emits empty assumptions defaults");
+assert.deepEqual(fallback.nonGoals, [], "fallback emits empty nonGoals defaults");
+assert.deepEqual(fallback.alternatives, [], "fallback emits empty alternatives defaults");
+assert.deepEqual(fallback.blastRadius, [], "fallback emits empty blastRadius defaults");
 assert.deepEqual(fallback.requirements, emptyRequirements, "fallback declares no special requirements");
 assert.deepEqual(fallback.proposedGates, [
   { name: "verify", kind: "command", stage: "per-round", command: "python3 -m pytest -q" },
@@ -209,6 +268,11 @@ const rendered = planner.renderFounderPlan(parsed, {
   manifestWriteEligible: true,
 });
 assert.match(rendered, /## Summary \(planner\)/, "render includes summary heading and source");
+assert.doesNotMatch(rendered, /## Understanding/, "render omits empty understanding section");
+assert.doesNotMatch(rendered, /## Assumptions/, "render omits empty assumptions section");
+assert.doesNotMatch(rendered, /## Non-goals/, "render omits empty non-goals section");
+assert.doesNotMatch(rendered, /## Alternatives considered/, "render omits empty alternatives section");
+assert.doesNotMatch(rendered, /## Blast radius/, "render omits empty blast-radius section");
 assert.match(rendered, /## Steps[\s\S]*1\./, "render includes numbered steps");
 assert.match(rendered, /## Files likely[\s\S]*`extensions\/foreman\/index\.ts`/, "render includes files likely");
 assert.match(rendered, /## Risks[\s\S]*Model unavailable/, "render includes risks");
@@ -217,6 +281,23 @@ assert.match(rendered, /## Proposed gates[\s\S]*verify \(per-round command\)[\s\
 assert.match(rendered, /## Proposed gates[\s\S]*lint \(pre-ship command\)[\s\S]*`npm run lint`/, "render includes multiple gate stages");
 assert.match(rendered, /## Proposed manifest[\s\S]*Gate 1 approval/, "render includes manifest decision");
 assert.match(rendered, /Developer: dev\/model/, "render includes execution metadata");
+
+const understandingRendered = planner.renderFounderPlan(understandingPlan, {
+  task: "Expose Gate 1 understanding",
+  cwd: "/tmp/repo",
+  track: "backend",
+  maxRounds: 3,
+  developerModel: "dev/model",
+  testerModel: "test/model",
+  manifestExists: false,
+  plannerSource: "planner",
+  manifestWriteEligible: true,
+});
+assert.match(understandingRendered, /## Understanding[\s\S]*task interpretation before code runs/, "render includes understanding section when content exists");
+assert.match(understandingRendered, /## Assumptions[\s\S]*Planner helper stays pure[\s\S]*confidence: high/, "render includes assumptions with confidence");
+assert.match(understandingRendered, /## Non-goals[\s\S]*Change the dev\/test\/review loop/, "render includes non-goals section");
+assert.match(understandingRendered, /## Alternatives considered[\s\S]*Rewrite the gates engine[\s\S]*rejected because Out of scope/, "render includes alternatives with rejected reasons");
+assert.match(understandingRendered, /## Blast radius[\s\S]*Gate 1 markdown rendering[\s\S]*Planner prompt contract/, "render includes blast-radius section");
 
 const fallbackRendered = planner.renderFounderPlan(fallback, {
   task: "Fix calc.add",
@@ -283,6 +364,9 @@ assert.match(requirementsRendered, /Gate 1 approval/, "requirements-only planner
 
 const requirementsRoundTrip = planner.validatePlannerPlan(JSON.parse(planner.serializePlannerPlan(requirementsPlan)));
 assert.deepEqual(requirementsRoundTrip, requirementsPlan, "serialized planner plans preserve requirements");
+
+const understandingRoundTrip = planner.validatePlannerPlan(JSON.parse(planner.serializePlannerPlan(understandingPlan)));
+assert.deepEqual(understandingRoundTrip, understandingPlan, "serialized planner plans preserve understanding-layer fields");
 
 const roundTrip = planner.validatePlannerPlan(JSON.parse(planner.serializePlannerPlan(parsed)));
 assert.deepEqual(roundTrip, parsed, "serialized planner plans validate on reload");

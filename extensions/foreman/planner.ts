@@ -35,8 +35,25 @@ export interface ForemanManifest {
 	requirements?: TaskRequirements;
 }
 
+export type PlannerAssumptionConfidence = "low" | "medium" | "high";
+
+export interface PlannerAssumption {
+	text: string;
+	confidence?: PlannerAssumptionConfidence;
+}
+
+export interface PlannerAlternative {
+	approach: string;
+	rejectedReason: string;
+}
+
 export interface PlannerPlan {
 	summary: string;
+	understanding?: string;
+	assumptions?: PlannerAssumption[];
+	nonGoals?: string[];
+	alternatives?: PlannerAlternative[];
+	blastRadius?: string[];
 	steps: string[];
 	filesLikely: string[];
 	risks: string[];
@@ -83,6 +100,7 @@ export interface ManifestDecision {
 
 const VALID_KINDS = new Set<GateKind>(["command", "judge", "action"]);
 const VALID_STAGES = new Set<GateStage>(["per-round", "pre-ship", "release"]);
+const VALID_CONFIDENCES = new Set<PlannerAssumptionConfidence>(["low", "medium", "high"]);
 const REQUIREMENT_CATEGORIES: RequirementCategory[] = ["env", "tools", "services"];
 export function resolvePlannerTimeouts(env: PlannerTimeoutEnv): PlannerTimeouts {
 	return resolveAgentTimeouts(env, "planner");
@@ -114,6 +132,38 @@ function cleanString(value: string): string {
 function cleanStringList(value: unknown): string[] {
 	if (!Array.isArray(value)) return [];
 	return value.filter(isNonEmptyString).map(cleanString).filter(Boolean);
+}
+
+function cleanOptionalString(value: unknown): string | undefined {
+	return isNonEmptyString(value) ? cleanString(value) : undefined;
+}
+
+function normalizePlannerAssumptionConfidence(value: unknown): PlannerAssumptionConfidence | undefined {
+	if (typeof value !== "string") return undefined;
+	const confidence = cleanString(value).toLowerCase();
+	return VALID_CONFIDENCES.has(confidence as PlannerAssumptionConfidence) ? (confidence as PlannerAssumptionConfidence) : undefined;
+}
+
+function normalizePlannerAssumption(value: unknown): PlannerAssumption | null {
+	if (!isRecord(value) || !isNonEmptyString(value.text)) return null;
+	const text = cleanString(value.text);
+	const confidence = normalizePlannerAssumptionConfidence(value.confidence);
+	return confidence ? { text, confidence } : { text };
+}
+
+function normalizePlannerAssumptions(value: unknown): PlannerAssumption[] {
+	if (!Array.isArray(value)) return [];
+	return value.map(normalizePlannerAssumption).filter((assumption): assumption is PlannerAssumption => assumption !== null);
+}
+
+function normalizePlannerAlternative(value: unknown): PlannerAlternative | null {
+	if (!isRecord(value) || !isNonEmptyString(value.approach) || !isNonEmptyString(value.rejectedReason)) return null;
+	return { approach: cleanString(value.approach), rejectedReason: cleanString(value.rejectedReason) };
+}
+
+function normalizePlannerAlternatives(value: unknown): PlannerAlternative[] {
+	if (!Array.isArray(value)) return [];
+	return value.map(normalizePlannerAlternative).filter((alternative): alternative is PlannerAlternative => alternative !== null);
 }
 
 function isGateKind(value: unknown): value is GateKind {
@@ -155,9 +205,15 @@ export function validatePlannerPlan(value: unknown): PlannerPlan | null {
 
 	const steps = cleanStringList(value.steps);
 	if (!steps.length) return null;
+	const understanding = cleanOptionalString(value.understanding);
 
 	return {
 		summary: cleanString(value.summary),
+		...(understanding ? { understanding } : {}),
+		assumptions: normalizePlannerAssumptions(value.assumptions),
+		nonGoals: cleanStringList(value.nonGoals),
+		alternatives: normalizePlannerAlternatives(value.alternatives),
+		blastRadius: cleanStringList(value.blastRadius),
 		steps,
 		filesLikely: cleanStringList(value.filesLikely),
 		risks: cleanStringList(value.risks),
@@ -190,6 +246,10 @@ export function fallbackPlannerPlan(context: PlannerContext): PlannerPlan {
 	const implementer = context.track === "frontend" ? "UI developer" : "Developer";
 	return {
 		summary: `Implement the requested task in ${context.cwd} using the ${context.track || "backend"} track, then verify it through Foreman's deterministic dev/test loop.`,
+		assumptions: [],
+		nonGoals: [],
+		alternatives: [],
+		blastRadius: [],
 		steps: [
 			"Confirm the relevant files and constraints before editing.",
 			`${implementer} implements the smallest scoped change and records a structured handoff.`,
@@ -277,6 +337,14 @@ function formatGate(gate: Gate): string {
 	return `- ${gate.name} (${gate.stage} ${gate.kind})${gatePayload(gate)}`;
 }
 
+function hasContent(lines: unknown[] | undefined): lines is unknown[] {
+	return Array.isArray(lines) && lines.length > 0;
+}
+
+function renderOptionalSection(heading: string, lines: string[]): string[] {
+	return lines.length ? ["", `## ${heading}`, ...lines] : [];
+}
+
 function categoryHeading(category: RequirementCategory): string {
 	if (category === "env") return "Env vars/secrets";
 	if (category === "tools") return "CLI tools/binaries";
@@ -329,12 +397,26 @@ export function renderFounderPlan(plan: PlannerPlan, context: PlannerContext): s
 	const requirementChecks = context.requirementChecks ?? unknownRequirementChecks(plan.requirements);
 	const requirements = renderRequirementChecks(requirementChecks);
 	const gates = plan.proposedGates.length ? plan.proposedGates.map(formatGate) : ["- (none proposed)"];
+	const understanding = plan.understanding ? [plan.understanding] : [];
+	const assumptions = hasContent(plan.assumptions)
+		? plan.assumptions.map((assumption) => `- ${assumption.text}${assumption.confidence ? ` _(confidence: ${assumption.confidence})_` : ""}`)
+		: [];
+	const nonGoals = (plan.nonGoals ?? []).map((nonGoal) => `- ${nonGoal}`);
+	const alternatives = hasContent(plan.alternatives)
+		? plan.alternatives.map((alternative) => `- ${alternative.approach} — rejected because ${alternative.rejectedReason}`)
+		: [];
+	const blastRadius = (plan.blastRadius ?? []).map((item) => `- ${item}`);
 	const plannerSource = context.plannerSource ? ` (${context.plannerSource})` : "";
 	return [
 		`# Plan: ${context.task}`,
 		"",
 		`## Summary${plannerSource}`,
 		plan.summary,
+		...renderOptionalSection("Understanding", understanding),
+		...renderOptionalSection("Assumptions", assumptions),
+		...renderOptionalSection("Non-goals", nonGoals),
+		...renderOptionalSection("Alternatives considered", alternatives),
+		...renderOptionalSection("Blast radius", blastRadius),
 		"",
 		"## Steps",
 		...plan.steps.map((step, index) => `${index + 1}. ${step}`),

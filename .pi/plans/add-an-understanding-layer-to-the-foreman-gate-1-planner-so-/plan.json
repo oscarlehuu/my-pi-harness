@@ -1,0 +1,63 @@
+{
+  "summary": "Add five optional, back-compat understanding-layer fields to the Foreman Gate 1 planner data-layer (planner.ts), require them in the planner prompt/contract (planner.md), and cover them in the headless planner test while preserving the extractJsonBlock regression.",
+  "steps": [
+    "planner.ts: extend PlannerPlan with optional understanding:string, assumptions:Array<{text:string;confidence?:'low'|'medium'|'high'}>, nonGoals:string[], alternatives:Array<{approach:string;rejectedReason:string}>, blastRadius:string[].",
+    "planner.ts: add pure normalizers (normalizeAssumptions drops entries missing text and coerces/drops invalid confidence; normalizeAlternatives drops entries missing approach or rejectedReason) mirroring cleanStringList/normalizePlannerGates; reuse cleanString/isRecord/isNonEmptyString.",
+    "planner.ts: in validatePlannerPlan normalize the new fields to empty defaults (never throw, never reject when missing) like the always-present requirements field, keeping validate idempotent for round-trip.",
+    "planner.ts: in fallbackPlannerPlan emit sensible empty defaults for the new fields.",
+    "planner.ts: in renderFounderPlan add one markdown section per new field, rendered only when it has content, leaving existing sections intact.",
+    "crew/planner.md: update prompt + PLAN-JSON contract block + example to require the new keys (restate task, >=2 approaches with rejected reasons, assumptions w/ confidence, explicit non-goals, blast radius, YAGNI/KISS/DRY as self-critique lens) while keeping the HARD OUTPUT CONTRACT and append-only model intact; do not remove the model frontmatter line.",
+    "test/planner_test.sh: add assertions that validate accepts plans WITH the new fields, normalizes malformed entries (alternative missing rejectedReason dropped; bad confidence coerced/dropped), still accepts plans WITHOUT them, and that render includes new section headers only when content is present; KEEP the existing extractJsonBlock regression and model-line grep guard unchanged.",
+    "Run the full per-round verify suite to confirm all foreman tests stay green."
+  ],
+  "filesLikely": [
+    "extensions/foreman/planner.ts",
+    "extensions/foreman/crew/planner.md",
+    "extensions/foreman/test/planner_test.sh"
+  ],
+  "risks": [
+    "Round-trip idempotency: validate(serialize(plan)) must equal validate(plan); use always-present empty defaults so the existing deepEqual round-trip test stays green.",
+    "The verify gate greps planner.md for 'claude-opus-4-8:xhigh' and tools/model frontmatter lines are asserted in planner_test.sh — edits must be additive and not touch those lines.",
+    "Existing extractJsonBlock 3-marker regression test must be preserved verbatim; weakening it fails the suite and the task intent.",
+    "New render section header strings are author-chosen and must match exactly between renderFounderPlan and the new test assertions.",
+    "Must stay pure/node-builtin-only in planner.ts and not touch index.ts, gates engine, ledger, or models.json (additive/optional fields only, no gate/DoD behavior change)."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [
+      {
+        "name": "node",
+        "reason": "headless planner_test.sh runs via node --input-type=module"
+      },
+      {
+        "name": "bash",
+        "reason": "foreman test harness scripts are bash"
+      },
+      {
+        "name": "git",
+        "reason": "release-stage commit action gate"
+      }
+    ],
+    "services": []
+  }
+}

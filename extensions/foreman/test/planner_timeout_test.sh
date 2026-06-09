@@ -55,7 +55,7 @@ assert.deepEqual(
 assert.ok(indexSource.includes("async function runAgentWithTimeout"), "generalized runAgent timeout wrapper exists");
 assert.ok(indexSource.includes("timeoutLogType(role)"), "timeouts are recorded through per-role ledger event names");
 
-assert.deepEqual(planner.resolvePlannerTimeouts({}), { idleMs: 90_000, maxMs: 300_000 }, "planner defaults stay 90s idle / 5m max");
+assert.deepEqual(planner.resolvePlannerTimeouts({}), { idleMs: 180_000, maxMs: 480_000 }, "planner defaults raised to 180s idle / 8m max (xhigh reads many files then deliberates before PLAN-JSON)");
 assert.deepEqual(timeouts.resolveAgentTimeouts({}, "developer"), { idleMs: 180_000, maxMs: 900_000 }, "developer default budget is longer");
 assert.deepEqual(timeouts.resolveAgentTimeouts({}, "ui-developer"), { idleMs: 180_000, maxMs: 900_000 }, "ui-developer fallback default budget is longer");
 assert.deepEqual(timeouts.resolveAgentTimeouts({}, "tester"), { idleMs: 90_000, maxMs: 300_000 }, "tester default budget is bounded like planner");
@@ -67,12 +67,12 @@ assert.deepEqual(
 );
 assert.deepEqual(
   planner.resolvePlannerTimeouts({ FOREMAN_PLANNER_TIMEOUT_MS: "2222" }),
-  { idleMs: 2_222, maxMs: 300_000 },
+  { idleMs: 2_222, maxMs: 480_000 },
   "legacy FOREMAN_PLANNER_TIMEOUT_MS sets idle when FOREMAN_PLANNER_IDLE_MS is absent",
 );
 assert.deepEqual(
   planner.resolvePlannerTimeouts({ FOREMAN_PLANNER_TIMEOUT_MS: "2222", FOREMAN_PLANNER_IDLE_MS: "3333" }),
-  { idleMs: 3_333, maxMs: 300_000 },
+  { idleMs: 3_333, maxMs: 480_000 },
   "FOREMAN_PLANNER_IDLE_MS overrides legacy FOREMAN_PLANNER_TIMEOUT_MS",
 );
 assert.deepEqual(

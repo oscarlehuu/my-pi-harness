@@ -52,7 +52,9 @@ export const AGENT_TIMEOUT_ROLES: AgentTimeoutRole[] = ["planner", "developer", 
 // bounded like the developer rather than the lightweight tester — a too-tight budget made it idle/max
 // out before it could emit its REVIEW verdict, blocking ship on strict DoD.
 export const DEFAULT_AGENT_TIMEOUTS_MS: Record<AgentTimeoutRole, AgentTimeouts> = {
-	planner: { idleMs: 90_000, maxMs: 300_000 },
+	// Planner reads many files then deliberates (xhigh) before emitting PLAN-JSON; a 90s idle was too
+	// tight for large tasks (it aborted mid-think after 15+ reads). Bounded like the other xhigh roles.
+	planner: { idleMs: 180_000, maxMs: 480_000 },
 	developer: { idleMs: 180_000, maxMs: 900_000 },
 	"ui-developer": { idleMs: 180_000, maxMs: 900_000 },
 	tester: { idleMs: 90_000, maxMs: 300_000 },

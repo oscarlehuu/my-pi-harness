@@ -33,6 +33,12 @@ Each domain is a self-contained folder under `extensions/` and registers one or 
 
 - `foreman` — gated planning/dev/test/review/ship orchestration, crew prompts, dashboard, ledger, and
   the framework charter.
+- `statusline` — replaces the default pi footer via `ctx.ui.setFooter()` with a high-density status
+  line: session name, context bar, git branch + dirty/ahead/behind, working dir, cost/tokens, and
+  model + thinking level. Preserves other extensions' status outputs (no hard cross-extension
+  import) by re-rendering `footerData.getExtensionStatuses()` on Line 2+. Git counts run in a 2.5s
+  background `execFile` poll (never inside the synchronous `render()`); see
+  `extensions/statusline/README.md`.
 - `subagent` — spawn primitive for isolated pi subprocess agents.
 - `AskUserQuestion` — structured interactive ask-the-user prompt primitive used for gate relays.
 - `grok` — web/X search plus Grok Imagine image/video tools through the subscription proxy.

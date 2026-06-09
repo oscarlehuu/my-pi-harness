@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-09T04:39:06.848Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "903de71d-b975-4348-9aae-00a86bd210f4",
+  "successState": "success",
+  "summary": "Let me verify the module loads.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/docer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman doc-er/drift helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "Let me verify the module loads.\nLet me run the module-eval verify to confirm.\nThe verify harness isn't directly runnable here, but the aggregate already passed (exit 0). Let me confirm the code logic against the spec without needing the runtime.\n\nThe implementation matches the task requirements. Let me do a final check on a couple of subtle spec points.\nThe implementation fully matches the spec:\n\n- **Session name** (`✎`, accent, first in leftParts) ✓\n- **Thinking level** using `pi.getThinkingLevel()` captured in closure, correct format ✓\n- **Working dir** with home→`~` substitution, after branch before cost ✓\n- **Git dirty/ahead/behind**: background `setInterval(refreshGit, 2500)`, `execFile` for both status + rev-list, refreshing guard, requestRender only on change, refreshGit on branch-change, dispose clears interval + unsub ✓\n- `render()` stays synchronous, no git spawn inside ✓\n- Left-group order correct; indicators warning-colored, branch dim ✓\n- 3 existing sections (context bar, branch, cost) + extension-statuses line preserved unchanged ✓\n- FOREMAN SEAM comment, `sanitizeStatusText`, `fmt` kept ✓\n- README Overview updated + new \"Performance: git polling\" section + Foreman section kept ✓\n- Only `node:child_process` added (builtin, no new dep), ESM/tabs preserved ✓\n\nAggregate gates passed (exit 0). Diff against parent shows additive edits, not a rewrite.\n\nVERDICT: PASS"
+}

@@ -15,6 +15,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { execFile } from "node:child_process";
 
 function sanitizeStatusText(text: string): string {
 	return text
@@ -33,12 +34,95 @@ function fmt(n: number): string {
 export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		ctx.ui.setFooter((tui, theme, footerData) => {
+			let git = { unstaged: 0, staged: 0, ahead: 0, behind: 0 };
+			let refreshing = false;
+
+			const refreshGit = () => {
+				if (refreshing) return;
+				refreshing = true;
+
+				const gitCwd = ctx.sessionManager?.getCwd?.() || ctx.cwd || process.cwd();
+
+				const p1 = new Promise<string>((resolve, reject) => {
+					execFile("git", ["--no-optional-locks", "status", "--porcelain=v1"], { cwd: gitCwd, timeout: 1500 }, (error, stdout) => {
+						if (error) reject(error);
+						else resolve(stdout || "");
+					});
+				});
+
+				const p2 = new Promise<string>((resolve, reject) => {
+					execFile("git", ["--no-optional-locks", "rev-list", "--left-right", "--count", "HEAD...@{upstream}"], { cwd: gitCwd, timeout: 1500 }, (error, stdout) => {
+						if (error) reject(error);
+						else resolve(stdout || "");
+					});
+				});
+
+				Promise.allSettled([p1, p2]).then(([r1, r2]) => {
+					try {
+						let newUnstaged = 0;
+						let newStaged = 0;
+						let newAhead = 0;
+						let newBehind = 0;
+
+						if (r1.status === "fulfilled") {
+							const lines = r1.value.split("\n");
+							for (const line of lines) {
+								if (line.length >= 2) {
+									const c0 = line[0];
+									const c1 = line[1];
+									if (c0 !== " " && c0 !== "?") {
+										newStaged++;
+									}
+									if (c1 !== " ") {
+										newUnstaged++;
+									}
+								}
+							}
+						}
+
+						if (r2.status === "fulfilled") {
+							const parts = r2.value.trim().split(/\s+/);
+							if (parts.length >= 2) {
+								newAhead = parseInt(parts[0], 10) || 0;
+								newBehind = parseInt(parts[1], 10) || 0;
+							}
+						}
+
+						if (
+							newUnstaged !== git.unstaged ||
+							newStaged !== git.staged ||
+							newAhead !== git.ahead ||
+							newBehind !== git.behind
+						) {
+							git = {
+								unstaged: newUnstaged,
+								staged: newStaged,
+								ahead: newAhead,
+								behind: newBehind
+							};
+							tui.requestRender?.();
+						}
+					} catch (e) {
+						// Swallow
+					} finally {
+						refreshing = false;
+					}
+				});
+			};
+
 			const unsub = typeof footerData?.onBranchChange === "function"
-				? footerData.onBranchChange(() => tui.requestRender())
+				? footerData.onBranchChange(() => {
+					refreshGit();
+					tui.requestRender?.();
+				})
 				: undefined;
+
+			refreshGit();
+			const gitTimer = setInterval(refreshGit, 2500);
 
 			return {
 				dispose() {
+					clearInterval(gitTimer);
 					if (unsub) {
 						unsub();
 					}
@@ -47,7 +131,14 @@ export default function (pi: ExtensionAPI) {
 				render(width: number): string[] {
 					const lines: string[] = [];
 
-					// a) Context bar + %
+					// 1) Session name
+					const leftParts: string[] = [];
+					const name = ctx.sessionManager?.getSessionName?.();
+					if (name) {
+						leftParts.push(theme.fg("accent", `✎ ${name}`));
+					}
+
+					// 2) Context bar + %
 					let contextUsageStr: string | undefined;
 					const contextUsage = ctx.getContextUsage?.();
 					const contextWindow = contextUsage?.contextWindow;
@@ -64,11 +155,46 @@ export default function (pi: ExtensionAPI) {
 							contextUsageStr = theme.fg(color, text);
 						}
 					}
+					if (contextUsageStr) {
+						leftParts.push(contextUsageStr);
+					}
 
-					// b) Git branch
+					// 3) Git branch (+ indicators)
 					const branch = footerData?.getGitBranch?.();
+					if (branch) {
+						const indicators: string[] = [];
+						if (git.unstaged > 0) {
+							indicators.push(`${git.unstaged}`);
+						}
+						if (git.staged > 0) {
+							indicators.push(`+${git.staged}`);
+						}
+						if (git.ahead > 0) {
+							indicators.push(`${git.ahead}↑`);
+						}
+						if (git.behind > 0) {
+							indicators.push(`${git.behind}↓`);
+						}
 
-					// c) Cost/tokens
+						const branchPart = theme.fg("dim", `⎇ ${branch}`);
+						if (indicators.length > 0) {
+							leftParts.push(branchPart + " " + theme.fg("warning", `(${indicators.join(", ")})`));
+						} else {
+							leftParts.push(branchPart);
+						}
+					}
+
+					// 4) Working Dir
+					const home = process.env.HOME || process.env.USERPROFILE || "";
+					let cwd = ctx.sessionManager?.getCwd?.() || ctx.cwd || "";
+					if (cwd) {
+						if (home && cwd.startsWith(home)) {
+							cwd = "~" + cwd.slice(home.length);
+						}
+						leftParts.push(theme.fg("dim", cwd));
+					}
+
+					// 5) Cost/tokens
 					let input = 0;
 					let output = 0;
 					let cost = 0;
@@ -85,20 +211,18 @@ export default function (pi: ExtensionAPI) {
 							}
 						}
 					}
-
-					// LAYOUT
-					// Line 1: left group = [context bar, "⎇ branch", cost/tokens] present-only, joined by "  "; wrap muted parts in theme.fg("dim", ...)
-					const leftParts: string[] = [];
-					if (contextUsageStr) {
-						leftParts.push(contextUsageStr);
-					}
-					if (branch) {
-						leftParts.push(theme.fg("dim", `⎇ ${branch}`));
-					}
 					leftParts.push(theme.fg("dim", `↑${fmt(input)} ↓${fmt(output)} $${cost.toFixed(3)}`));
 					
 					const left = leftParts.join("  ");
-					const right = theme.fg("dim", ctx.model?.id || "no-model");
+
+					// Right side: Model ID + thinking level
+					const modelId = ctx.model?.id || "no-model";
+					let rightText = modelId;
+					if (ctx.model?.reasoning) {
+						const lvl = (typeof pi.getThinkingLevel === "function" ? pi.getThinkingLevel() : undefined) || "off";
+						rightText = lvl === "off" ? `${modelId} • thinking off` : `${modelId} • ${lvl}`;
+					}
+					const right = theme.fg("dim", rightText);
 					
 					const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
 					lines.push(truncateToWidth(left + pad + right, width));

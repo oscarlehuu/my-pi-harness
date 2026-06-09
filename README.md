@@ -11,7 +11,8 @@ very loop it implements.
 
 > **Status:** personal research harness, shared in the open. It runs on a local
 > [`cli-proxy-api`](https://github.com/router-for-me/CLIProxyAPI) that routes to Claude / GPT / Gemini
-> via subscription auth. See [Setup](#setup) and the [disclaimer](#disclaimer) before using.
+> via subscription auth. `models.json` reads the proxy token directly from your local proxy config at
+> load time — no secret is committed. See [Setup](#setup) and the [disclaimer](#disclaimer).
 
 ---
 
@@ -135,15 +136,17 @@ running [`cli-proxy-api`](https://github.com/router-for-me/CLIProxyAPI) (v7+) th
 Claude / OpenAI / Gemini subscriptions.
 
 ```bash
-# 1. Point models.json's apiKey at your local proxy token via env
-export API_KEY="<the api-key from your cli-proxy-api config.yaml>"
-
-# 2. Install the workspace into ~/.pi/agent (idempotent symlinks)
+# 1. Install the workspace into ~/.pi/agent (idempotent symlinks)
 ./install.sh
 
-# 3. Run pi from any project
+# 2. Run pi from any project
 pi
 ```
+
+`config/models.json` resolves the cliproxy `apiKey` at load time by reading the first `api-keys`
+entry from `~/cliproxyapi/config.yaml` (pi's `!command` config indirection). The token therefore
+lives only in your local proxy config — never in this repo and not dependent on a shell env var. If
+your proxy config lives elsewhere, adjust that one line in `models.json`.
 
 `~/.pi/agent` is the live, machine-wide pi directory; this repo is the versioned source.
 `install.sh` symlinks each domain onto the flat names pi expects, and links each crew agent per-file

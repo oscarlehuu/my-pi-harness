@@ -9,3 +9,7 @@
 # Ledger noise inside any project we run (only .pi/plans/ ledger is committed in target repos)
 *.log
 *.tmp
+
+# Scratch / throwaway working notes (not part of the published workspace)
+plans/reports/
+extensions/grok/grok-build-vs-harness-video-gap-prompt.md

@@ -1,0 +1,10 @@
+{
+  "name": "session-namer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Automatically assigns concise display names to pi sessions after the first completed turn.",
+  "pi": {
+    "extensions": ["index.ts"]
+  }
+}

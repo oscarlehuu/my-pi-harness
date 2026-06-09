@@ -9,7 +9,7 @@
 import type { SuccessState } from "./ledger.ts";
 import type { ReviewDecision } from "./reviewer.ts";
 
-export type AgentTimeoutRole = "planner" | "developer" | "ui-developer" | "tester" | "reviewer";
+export type AgentTimeoutRole = "planner" | "developer" | "ui-developer" | "tester" | "reviewer" | "doc-er";
 export type AgentTimeoutReason = "idle" | "max";
 
 export interface AgentTimeoutDecision {
@@ -34,7 +34,8 @@ export type AgentTimeoutDegradationAction =
 	| "planner-fallback"
 	| "retry-developer-round"
 	| "fail-tester-verdict"
-	| "flag-reviewer-inconclusive";
+	| "flag-reviewer-inconclusive"
+	| "flag-doc-er-soft-failure";
 
 export interface AgentTimeoutDegradation {
 	action: AgentTimeoutDegradationAction;
@@ -44,7 +45,7 @@ export interface AgentTimeoutDegradation {
 	flagged?: boolean;
 }
 
-export const AGENT_TIMEOUT_ROLES: AgentTimeoutRole[] = ["planner", "developer", "ui-developer", "tester", "reviewer"];
+export const AGENT_TIMEOUT_ROLES: AgentTimeoutRole[] = ["planner", "developer", "ui-developer", "tester", "reviewer", "doc-er"];
 
 // Defaults are intentionally visible in one place. Developer/UI get longer budgets because they
 // may edit and run local checks. The reviewer also needs a generous budget: it runs an xhigh model
@@ -59,6 +60,7 @@ export const DEFAULT_AGENT_TIMEOUTS_MS: Record<AgentTimeoutRole, AgentTimeouts> 
 	"ui-developer": { idleMs: 180_000, maxMs: 900_000 },
 	tester: { idleMs: 90_000, maxMs: 300_000 },
 	reviewer: { idleMs: 180_000, maxMs: 720_000 },
+	"doc-er": { idleMs: 180_000, maxMs: 720_000 },
 };
 
 export const MIN_AGENT_IDLE_MS = 1_000;
@@ -69,6 +71,7 @@ const ROLE_ENV_PREFIX: Record<AgentTimeoutRole, string> = {
 	"ui-developer": "UI_DEVELOPER",
 	tester: "TESTER",
 	reviewer: "REVIEWER",
+	"doc-er": "DOC_ER",
 };
 
 function parseTimeoutMs(value: string | undefined, fallback: number): number {
@@ -103,6 +106,7 @@ export function resolveAllAgentTimeouts(env: AgentTimeoutEnv): Record<AgentTimeo
 		"ui-developer": resolveAgentTimeouts(env, "ui-developer"),
 		tester: resolveAgentTimeouts(env, "tester"),
 		reviewer: resolveAgentTimeouts(env, "reviewer"),
+		"doc-er": resolveAgentTimeouts(env, "doc-er"),
 	};
 }
 
@@ -142,5 +146,6 @@ export function decideAgentTimeoutDegradation(
 	if (role === "planner") return { action: "planner-fallback", note };
 	if (role === "developer" || role === "ui-developer") return { action: "retry-developer-round", note };
 	if (role === "tester") return { action: "fail-tester-verdict", note, successState: "fail" };
-	return { action: "flag-reviewer-inconclusive", note, reviewDecision: "unknown", flagged: true };
+	if (role === "reviewer") return { action: "flag-reviewer-inconclusive", note, reviewDecision: "unknown", flagged: true };
+	return { action: "flag-doc-er-soft-failure", note, flagged: true };
 }

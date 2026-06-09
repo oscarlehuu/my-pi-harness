@@ -81,6 +81,7 @@ import {
 import { decideReviewOutcome, parseReviewVerdict, type ReviewVerdict } from "./reviewer.ts";
 import { evaluateDoneness, extractDonenessInputs, renderDoneChecklist } from "./done.ts";
 import { buildCommitMessage, decideShipCommit, resolveStagePaths } from "./ship.ts";
+import { detectLikelyStaleDocs, isForemanDocumentationPath, type DocumentationFile } from "./docdrift.ts";
 import { repoEngagementActive, setRepoEngagement } from "./engagement.ts";
 
 // Stronger model the frontend track falls back to when Gemini fails to drive the tools.
@@ -131,7 +132,7 @@ interface RunResult {
 	stderr: string;
 }
 
-type AgentRole = "planner" | "developer" | "tester" | "reviewer";
+type AgentRole = "planner" | "developer" | "tester" | "reviewer" | "doc-er";
 
 interface RunAgentOptions {
 	role: AgentRole;
@@ -612,6 +613,269 @@ function reviewerTaskFor(context: {
 	].join("\n");
 }
 
+interface DocErMachineLine {
+	status: "UPDATED" | "NONE";
+	updatedPaths: string[];
+	reason?: string;
+	raw?: string;
+}
+
+interface DocErStageReport {
+	status: "UPDATED" | "NONE" | "TIMED-OUT";
+	updatedPaths: string[];
+	reason?: string;
+	flagged: boolean;
+	summaryLine: string;
+	driftDocs: string[];
+	driftLine?: string;
+}
+
+const DOC_TEXT_EXTENSIONS = new Set([".md", ".mdx", ".txt", ".rst", ".adoc"]);
+
+function stripPathPunctuation(value: string): string {
+	return value.replace(/^[`'"<]+/g, "").replace(/[`'">.,;:]+$/g, "").trim();
+}
+
+function stripPathAnchor(value: string): string {
+	return value.replace(/[?#].*$/, "").replace(/(?::\d+){1,2}$/, "");
+}
+
+function cleanReportedPath(value: string): string {
+	return stripPathAnchor(stripPathPunctuation(value).replace(/\\/g, "/").replace(/^\.\//, ""));
+}
+
+function leadingReportedPath(entry: string): string {
+	let cleaned = entry.replace(/^\s*(?:[-*•]\s+|\d+[.)]\s+)/, "").trim();
+	const separatedDescription = cleaned.match(/^(.*?)\s+-\s+.+$/);
+	if (separatedDescription) cleaned = separatedDescription[1].trim();
+	else cleaned = cleaned.split(/\s+/)[0] ?? "";
+	return cleanReportedPath(cleaned);
+}
+
+function uniquePaths(values: string[]): string[] {
+	const out: string[] = [];
+	const seen = new Set<string>();
+	for (const value of values) {
+		const cleaned = cleanReportedPath(value);
+		if (!cleaned || seen.has(cleaned)) continue;
+		seen.add(cleaned);
+		out.push(cleaned);
+	}
+	return out;
+}
+
+function parseDocErPathList(detail: string): string[] {
+	return uniquePaths(detail.split(/[\s,]+/).filter(Boolean)).filter(isForemanDocumentationPath);
+}
+
+function parseDocErMachineLine(text: string): DocErMachineLine | null {
+	const matches = [...text.matchAll(/^\s*DOC-ER:\s*(UPDATED|NONE)\b(.*)$/gim)];
+	if (!matches.length) return null;
+	const match = matches[matches.length - 1];
+	const status = match[1].toUpperCase() as "UPDATED" | "NONE";
+	const detail = (match[2] ?? "").trim();
+	const raw = match[0].trim();
+	if (status === "NONE") return { status, updatedPaths: [], reason: detail || "no documentation updates needed", raw };
+	return { status, updatedPaths: parseDocErPathList(detail), reason: detail ? undefined : "missing updated doc paths", raw };
+}
+
+function docErTaskFor(context: { cwd: string; task: string; round: number; devHandoff: Handoff; intentContract: string }): string {
+	const files = uniquePaths((context.devHandoff.filesChanged ?? []).map(leadingReportedPath)).filter(Boolean);
+	return [
+		`Run the SOFT documentation refresh stage for this Foreman task in ${context.cwd}.`,
+		`Task: ${context.task}`,
+		`Round: ${context.round}`,
+		`Developer handoff summary: ${context.devHandoff.summary}`,
+		"Developer filesChanged:",
+		files.length ? files.map((file) => `- ${file}`).join("\n") : "- (none reported)",
+		context.devHandoff.howToVerify ? `Developer verification note: ${context.devHandoff.howToVerify}` : "Developer verification note: (none reported)",
+		context.intentContract ? `Founder-approved intent contract:\n${context.intentContract}` : "Founder-approved intent contract: (none persisted)",
+		"",
+		"Update code/architecture docs to reflect the shipped change. Agent-friendly first: stable headers, file:line/function anchors, invariants, state transitions, and NEVER-do boundaries; then human-friendly prose.",
+		"Hard boundaries: write ONLY under docs/ and extensions/*/docs/. NEVER edit code. NEVER edit AGENTS.md. Write nothing if nothing needs documenting.",
+		"Update existing docs in place. Create a new doc only when there is no existing documentation home for this change.",
+		"End with exactly one machine line: `DOC-ER: UPDATED <paths>` or `DOC-ER: NONE <reason>`.",
+	].join("\n");
+}
+
+function collectDocRootFiles(cwd: string, rootRel: string, out: DocumentationFile[]): void {
+	const rootAbs = path.join(cwd, rootRel);
+	if (!fs.existsSync(rootAbs)) return;
+	const stack = [rootRel];
+	while (stack.length) {
+		const relDir = stack.pop()!;
+		let entries: fs.Dirent[];
+		try {
+			entries = fs.readdirSync(path.join(cwd, relDir), { withFileTypes: true });
+		} catch {
+			continue;
+		}
+		for (const entry of entries) {
+			const relPath = path.join(relDir, entry.name).replace(/\\/g, "/");
+			if (entry.isDirectory()) {
+				stack.push(relPath);
+				continue;
+			}
+			if (!entry.isFile() || !DOC_TEXT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
+			try {
+				out.push({ path: relPath, content: fs.readFileSync(path.join(cwd, relPath), "utf-8") });
+			} catch {
+				// Documentation drift is advisory; unreadable docs are skipped rather than blocking Gate 2.
+			}
+		}
+	}
+}
+
+function collectRepoDocumentationFiles(cwd: string): DocumentationFile[] {
+	const docs: DocumentationFile[] = [];
+	const roots = new Set<string>(["docs"]);
+	try {
+		const extensionsDir = path.join(cwd, "extensions");
+		if (fs.existsSync(extensionsDir)) {
+			for (const entry of fs.readdirSync(extensionsDir, { withFileTypes: true })) {
+				if (entry.isDirectory()) roots.add(`extensions/${entry.name}/docs`);
+			}
+		}
+	} catch {
+		// Best-effort discovery; the docs/ root is still checked below.
+	}
+	for (const root of roots) collectDocRootFiles(cwd, root, docs);
+	return docs;
+}
+
+function formatDocErSummary(report: Pick<DocErStageReport, "status" | "updatedPaths" | "reason" | "flagged">): string {
+	if (report.status === "UPDATED") return `Doc-er: UPDATED ${report.updatedPaths.join(", ")}`;
+	if (report.status === "TIMED-OUT") return `Doc-er: TIMED-OUT${report.reason ? ` (${report.reason})` : ""}${report.flagged ? " ⚠" : ""}`;
+	return `Doc-er: NONE${report.reason ? ` (${report.reason})` : ""}${report.flagged ? " ⚠" : ""}`;
+}
+
+function formatDocDriftLine(staleDocs: string[]): string | undefined {
+	return staleDocs.length ? `⚠ docs may be stale: ${staleDocs.join(", ")}` : undefined;
+}
+
+function formatDocGate2Lines(report: Pick<DocErStageReport, "summaryLine" | "driftLine"> | null): string {
+	if (!report) return "";
+	return [report.summaryLine, report.driftLine].filter(Boolean).join("\n");
+}
+
+function latestDocGate2LinesFromEvents(events: Array<Record<string, unknown>>): string {
+	let summaryLine = "";
+	let driftLine: string | undefined;
+	for (const event of events) {
+		if (event.type === "doc_er_result") {
+			const status = event.status === "UPDATED" || event.status === "TIMED-OUT" ? event.status : "NONE";
+			const updatedPaths = Array.isArray(event.updatedPaths) ? event.updatedPaths.filter((p): p is string => typeof p === "string") : [];
+			const reason = typeof event.reason === "string" ? event.reason : undefined;
+			const flagged = event.flagged === true;
+			summaryLine = formatDocErSummary({ status, updatedPaths, reason, flagged });
+		}
+		if (event.type === "doc_drift_checked") {
+			const staleDocs = Array.isArray(event.staleDocs) ? event.staleDocs.filter((p): p is string => typeof p === "string") : [];
+			driftLine = formatDocDriftLine(staleDocs);
+		}
+	}
+	return formatDocGate2Lines(summaryLine ? { summaryLine, driftLine } : null);
+}
+
+async function runDocErStage(input: {
+	cwd: string;
+	slug: string;
+	state: LedgerState;
+	round: number;
+	devHandoff: Handoff;
+	intentContract: string;
+	ownerSessionId?: string;
+	signal?: AbortSignal;
+	shouldRun: boolean;
+	skipReason?: string;
+	emit: (line: string) => void;
+	pushStatus: () => void;
+	startSpinner: () => void;
+	stopSpinner: () => void;
+}): Promise<DocErStageReport> {
+	const changedCodePaths = uniquePaths((input.devHandoff.filesChanged ?? []).map(leadingReportedPath)).filter(
+		(file) => file && !isForemanDocumentationPath(file) && !file.startsWith(".pi/"),
+	);
+	let report: DocErStageReport;
+
+	if (!input.shouldRun) {
+		report = { status: "NONE", updatedPaths: [], reason: input.skipReason ?? "skipped", flagged: true, summaryLine: "", driftDocs: [] };
+		appendLog(input.cwd, input.slug, { type: "doc_er_skipped", round: input.round, reason: report.reason });
+	} else {
+		input.emit(`Round ${input.round}: doc-er documentation refresh...`);
+		appendLog(input.cwd, input.slug, { type: "doc_er_started", round: input.round, changedCodePaths });
+		const docSession = randomUUID();
+		const docTranscript = transcriptFilePath(input.cwd, input.slug, "doc-er", input.round, docSession);
+		writeActivity(input.cwd, input.slug, {
+			round: input.round,
+			phase: "tester",
+			activeTranscript: path.basename(docTranscript),
+			note: "doc-er running…",
+			pid: process.pid,
+			ownerSessionId: input.ownerSessionId,
+		});
+		input.pushStatus();
+		input.startSpinner();
+		try {
+			const docEr = loadAgent("doc-er");
+			const docOutcome = await runAgentWithTimeout(
+				docEr,
+				docErTaskFor({ cwd: input.cwd, task: input.state.task, round: input.round, devHandoff: input.devHandoff, intentContract: input.intentContract }),
+				input.cwd,
+				{ role: "doc-er", round: input.round, transcriptPath: docTranscript, signal: input.signal, slug: input.slug },
+				"doc-er",
+			);
+			const docRun = docOutcome.result;
+			if (docOutcome.timeout.timedOut) {
+				const timeoutDegradation = decideAgentTimeoutDegradation("doc-er", docOutcome.timeout, AGENT_TIMEOUTS["doc-er"]);
+				const note = recordAgentTimeout(input.cwd, input.slug, "doc-er", input.round, docOutcome.timeout) ?? timeoutDegradation.note;
+				report = { status: "TIMED-OUT", updatedPaths: [], reason: note || `doc-er timed out (${docOutcome.timeout.reason ?? "unknown"})`, flagged: true, summaryLine: "", driftDocs: [] };
+			} else if (docRun.exitCode !== 0) {
+				report = { status: "NONE", updatedPaths: [], reason: `doc-er exited ${docRun.exitCode}`, flagged: true, summaryLine: "", driftDocs: [] };
+				appendLog(input.cwd, input.slug, { type: "doc_er_failed", round: input.round, exitCode: docRun.exitCode, stderr: docRun.stderr.slice(-1000) });
+			} else {
+				const parsed = parseDocErMachineLine(docRun.text);
+				if (!parsed) {
+					report = { status: "NONE", updatedPaths: [], reason: "missing DOC-ER line", flagged: true, summaryLine: "", driftDocs: [] };
+				} else if (parsed.status === "UPDATED" && parsed.updatedPaths.length === 0) {
+					report = { status: "NONE", updatedPaths: [], reason: parsed.reason ?? "UPDATED line had no allowed doc paths", flagged: true, summaryLine: "", driftDocs: [] };
+				} else {
+					report = { status: parsed.status, updatedPaths: parsed.updatedPaths, reason: parsed.reason, flagged: parsed.status === "NONE", summaryLine: "", driftDocs: [] };
+				}
+			}
+		} catch (error) {
+			report = { status: "NONE", updatedPaths: [], reason: `doc-er failed: ${String(error)}`, flagged: true, summaryLine: "", driftDocs: [] };
+			appendLog(input.cwd, input.slug, { type: "doc_er_failed", round: input.round, error: String(error) });
+		} finally {
+			input.stopSpinner();
+		}
+	}
+
+	report.summaryLine = formatDocErSummary(report);
+	const driftDocs = detectLikelyStaleDocs({ changedCodePaths, docFiles: collectRepoDocumentationFiles(input.cwd), updatedDocPaths: report.updatedPaths });
+	report.driftDocs = driftDocs;
+	report.driftLine = formatDocDriftLine(driftDocs);
+	appendLog(input.cwd, input.slug, {
+		type: "doc_er_result",
+		round: input.round,
+		status: report.status,
+		updatedPaths: report.updatedPaths,
+		reason: report.reason,
+		flagged: report.flagged,
+	});
+	appendLog(input.cwd, input.slug, { type: "doc_drift_checked", round: input.round, changedCodePaths, updatedDocPaths: report.updatedPaths, staleDocs: driftDocs });
+	writeActivity(input.cwd, input.slug, {
+		round: input.round,
+		phase: "idle",
+		activeTranscript: null,
+		note: `${report.summaryLine}${report.driftLine ? `; ${report.driftLine}` : ""}`.slice(0, 500),
+		pid: process.pid,
+		ownerSessionId: input.ownerSessionId,
+	});
+	input.pushStatus();
+	return report;
+}
+
 function foremanManifestPath(cwd: string): string {
 	return path.join(cwd, ".pi", "foreman.json");
 }
@@ -939,6 +1203,10 @@ function readShipHandoffContext(cwd: string, slug: string): ShipHandoffContext {
 		} catch {
 			// Handoffs are controller-owned but still best-effort for release metadata; skip corrupt files.
 		}
+	}
+	for (const event of readLedgerLogEvents(cwd, slug)) {
+		if (event.type !== "doc_er_result" || !Array.isArray(event.updatedPaths)) continue;
+		filesChanged.push(...event.updatedPaths.filter((file): file is string => typeof file === "string" && isForemanDocumentationPath(file)));
 	}
 	return {
 		filesChanged,
@@ -1529,6 +1797,8 @@ export default function (pi: ExtensionAPI) {
 
 			// ---- GATE 2 resume: founder decides on a task that already passed verification ----
 			if (state.state === "awaiting_ship") {
+				const docGate2Lines = latestDocGate2LinesFromEvents(readLedgerLogEvents(cwd, slug));
+				const docGate2Block = docGate2Lines ? `Documentation:\n${docGate2Lines}\n` : "";
 				if (params.reject) {
 					state.state = "in_progress";
 					writeState(cwd, state);
@@ -1546,7 +1816,7 @@ export default function (pi: ExtensionAPI) {
 						writeState(cwd, state);
 						appendLog(cwd, slug, { type: "done_blocked", blockers: doneness.blockers });
 						emit(
-							`\n=== GATE 2 / SHIP — Definition of Done blocked ===\n${doneChecklist}\n\n` +
+							`\n=== GATE 2 / SHIP — Definition of Done blocked ===\n${docGate2Block}${doneChecklist}\n\n` +
 								`Commit withheld. The task remains at Gate 2; it was NOT marked done.\n` +
 								`Resolve the blockers, then approve again. To send it back, run: foreman({ resume: true, reject: "<what to change>" })\n` +
 								`If the only blocker is an inconclusive reviewer verdict, reopen with reject feedback asking for a live reviewer rerun; strict mode has no force-ship bypass and requires REVIEW: APPROVE before commit.`,
@@ -1565,12 +1835,13 @@ export default function (pi: ExtensionAPI) {
 						? await runReleaseActionGates({ cwd, slug, state, track, gates: releaseActionGates, doneSummary: doneChecklist, signal })
 						: [];
 					const releaseSummary = releaseResults.length ? `\nRelease actions:\n${releaseResults.join("\n")}` : "";
-					emit(`SHIPPED. Task done. Ledger: ${path.relative(cwd, taskDir(cwd, slug))}\n\n${doneChecklist}${releaseSummary}`);
+					emit(`SHIPPED. Task done. Ledger: ${path.relative(cwd, taskDir(cwd, slug))}\n\n${docGate2Block}${doneChecklist}${releaseSummary}`);
 					return done();
 				} else {
 					const doneChecklist = renderDoneChecklist(evaluateCurrentDoneness(false));
 					emit(
 						`\n=== GATE 2 / SHIP — approval needed ===\nTask "${state.task}" passed verification and is awaiting your sign-off.\n` +
+							docGate2Block +
 							`${doneChecklist}\n` +
 							`Approve:  foreman({ resume: true, approve: true })\n` +
 							`Revise:   foreman({ resume: true, reject: "<what to change>" })`,
@@ -1868,10 +2139,13 @@ export default function (pi: ExtensionAPI) {
 				if (successState === "success") {
 					const preShipGates = gatesForStage(gates, "pre-ship");
 					const preShipSummaryLines: string[] = [];
+					let preShipJudgeGateCount = 0;
+					let preShipReviewApproved = true;
 
 					if (preShipGates.length) {
 						const preShipCommandGates = preShipGates.filter((gate) => gate.kind === "command" && gate.command);
 						const preShipJudgeGates = preShipGates.filter((gate) => gate.kind === "judge" && gate.agent);
+						preShipJudgeGateCount += preShipJudgeGates.length;
 						const preShipActionGates = preShipGates.filter((gate) => gate.kind === "action");
 						const preShipCommandSummaryLines: string[] = [];
 
@@ -2018,6 +2292,7 @@ export default function (pi: ExtensionAPI) {
 							});
 							state.lastReviewedHandoffCount = listHandoffs(cwd, slug).length;
 							writeState(cwd, state);
+							if (review.decision !== "approve") preShipReviewApproved = false;
 
 							preShipSummaryLines.push(reviewSummaryLine(gate, review));
 							if (review.nits.length) preShipSummaryLines.push(`  NITS:\n${formatReviewItems(review.nits).replace(/^/gm, "  ")}`);
@@ -2071,17 +2346,44 @@ export default function (pi: ExtensionAPI) {
 						pushStatus();
 					}
 
+					const docErReport = await runDocErStage({
+						cwd,
+						slug,
+						state,
+						round,
+						devHandoff,
+						intentContract,
+						ownerSessionId: sessionId,
+						signal,
+						shouldRun: preShipJudgeGateCount === 0 || preShipReviewApproved,
+						skipReason: "skipped until pre-ship reviewer cleanly APPROVEs",
+						emit,
+						pushStatus,
+						startSpinner,
+						stopSpinner,
+					});
+					emit(`Round ${round}: ${docErReport.summaryLine}${docErReport.driftLine ? `; ${docErReport.driftLine}` : ""}.`);
+
 					// ---- GATE 2: SHIP APPROVAL (verification passed; founder OKs before done) ----
 					state.state = "awaiting_ship";
 					writeState(cwd, state);
-					appendLog(cwd, slug, { type: "gate2_awaiting", round, preShipSummary: preShipSummaryLines.length ? preShipSummaryLines : undefined });
+					appendLog(cwd, slug, {
+						type: "gate2_awaiting",
+						round,
+						preShipSummary: preShipSummaryLines.length ? preShipSummaryLines : undefined,
+						docEr: { status: docErReport.status, updatedPaths: docErReport.updatedPaths, reason: docErReport.reason, flagged: docErReport.flagged },
+						docDrift: docErReport.driftDocs,
+					});
 					const preShipSummary = preShipSummaryLines.length ? `Pre-ship checks:\n${preShipSummaryLines.join("\n")}\n` : "";
+					const docGate2Lines = formatDocGate2Lines(docErReport);
+					const docGate2Block = docGate2Lines ? `Documentation:\n${docGate2Lines}\n` : "";
 					const doneChecklist = renderDoneChecklist(evaluateCurrentDoneness(false));
 					emit(
 						`\n=== GATE 2 / SHIP — approval needed (round ${round}) ===\n` +
 							`Verification passed and the tester judged the work satisfies: ${state.task}\n` +
 							`Summary: ${testHandoff.summary}\n` +
 							preShipSummary +
+							docGate2Block +
 							`${doneChecklist}\n` +
 							`Approve:  foreman({ resume: true, approve: true })\n` +
 							`Revise:   foreman({ resume: true, reject: "<what to change>" })`,

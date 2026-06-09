@@ -60,6 +60,7 @@ assert.deepEqual(timeouts.resolveAgentTimeouts({}, "developer"), { idleMs: 180_0
 assert.deepEqual(timeouts.resolveAgentTimeouts({}, "ui-developer"), { idleMs: 180_000, maxMs: 900_000 }, "ui-developer fallback default budget is longer");
 assert.deepEqual(timeouts.resolveAgentTimeouts({}, "tester"), { idleMs: 90_000, maxMs: 300_000 }, "tester default budget is bounded like planner");
 assert.deepEqual(timeouts.resolveAgentTimeouts({}, "reviewer"), { idleMs: 180_000, maxMs: 720_000 }, "reviewer default budget is generous (xhigh + heavy recon), bounded like the developer");
+assert.deepEqual(timeouts.resolveAgentTimeouts({}, "doc-er"), { idleMs: 180_000, maxMs: 720_000 }, "doc-er default budget mirrors reviewer graceful-degradation budget");
 assert.deepEqual(
   planner.resolvePlannerTimeouts({ FOREMAN_PLANNER_IDLE_MS: "12000", FOREMAN_PLANNER_MAX_MS: "120000" }),
   { idleMs: 12_000, maxMs: 120_000 },
@@ -106,9 +107,19 @@ assert.deepEqual(
   "reviewer per-role env overrides are honored",
 );
 assert.deepEqual(
+  timeouts.resolveAgentTimeouts({ FOREMAN_DOC_ER_IDLE_MS: "70000", FOREMAN_DOC_ER_MAX_MS: "250000" }, "doc-er"),
+  { idleMs: 70_000, maxMs: 250_000 },
+  "doc-er per-role env overrides are honored",
+);
+assert.deepEqual(
   timeouts.timeoutEnvKeys("ui-developer"),
   { idle: "FOREMAN_UI_DEVELOPER_IDLE_MS", max: "FOREMAN_UI_DEVELOPER_MAX_MS" },
   "hyphenated ui-developer role maps to usable env var names",
+);
+assert.deepEqual(
+  timeouts.timeoutEnvKeys("doc-er"),
+  { idle: "FOREMAN_DOC_ER_IDLE_MS", max: "FOREMAN_DOC_ER_MAX_MS" },
+  "hyphenated doc-er role maps to DOC_ER env var names",
 );
 assert.deepEqual(
   timeouts.decideAgentTimeout({ now: 10_001, startedAt: 0, lastActivityAt: 0, idleMs: 10_000, maxMs: 60_000 }),
@@ -139,6 +150,9 @@ const reviewerDegradation = timeouts.decideAgentTimeoutDegradation("reviewer", i
 assert.equal(reviewerDegradation.action, "flag-reviewer-inconclusive", "reviewer timeout maps to inconclusive pre-ship review");
 assert.equal(reviewerDegradation.reviewDecision, "unknown", "reviewer timeout records UNKNOWN decision");
 assert.equal(reviewerDegradation.flagged, true, "reviewer timeout is flagged for Gate 2 rather than auto-approved");
+const docErDegradation = timeouts.decideAgentTimeoutDegradation("doc-er", idleOutcome);
+assert.equal(docErDegradation.action, "flag-doc-er-soft-failure", "doc-er timeout maps to a soft flagged docs outcome");
+assert.equal(docErDegradation.flagged, true, "doc-er timeout is flagged for Gate 2 rather than blocking ship");
 assert.deepEqual(
   timeouts.decideAgentTimeoutDegradation("tester", { timedOut: false, reason: null }),
   { action: "none", note: "" },

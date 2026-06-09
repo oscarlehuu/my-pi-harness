@@ -1,0 +1,112 @@
+{
+  "summary": "Add a SOFT doc-er documentation stage to Foreman that runs after pre-ship reviewer APPROVE and before Gate 2 (index.ts:2073). It refreshes docs under docs/ and extensions/*/docs/ via a new crew agent (cliproxy/claude-opus-4-8:high) through runAgentWithTimeout with a new 'doc-er' timeout role, mirroring reviewer graceful degradation so timeout/error/no-op logs+flags and proceeds, never blocking ship or adding a DoD blocker. A pure docdrift.ts helper flags docs that reference changed code paths but weren't updated this task; doc-er outcome + drift warning surface in the Gate 2 emit and ledger. Updated doc paths are recorded so the release commit stages them path-scoped with the task. New headless tests are added to the per-round verify gate.",
+  "assumptions": [],
+  "nonGoals": [],
+  "alternatives": [],
+  "blastRadius": [],
+  "steps": [
+    "agent-timeouts.ts: add 'doc-er' to AgentTimeoutRole, AGENT_TIMEOUT_ROLES, DEFAULT_AGENT_TIMEOUTS_MS (idle 180000 / max 720000), ROLE_ENV_PREFIX ('DOC_ER'), and resolveAllAgentTimeouts; keep pure/node-builtin-only. doc-er has no degradation mapping (SOFT proceed), so decideAgentTimeoutDegradation falls through to a benign default.",
+    "crew/doc-er.md: new agent mirroring reviewer.md structure with append-only prompt. Frontmatter name: doc-er, model: cliproxy/claude-opus-4-8:high, tools: read, grep, find, ls, bash, edit, write. Prompt: job = after approval, update code/architecture docs under docs/ and extensions/*/docs/ to reflect the shipped change; agent-friendly first (stable headers, file:line/function anchors, invariants, NEVER-do) then human-friendly; receives task + dev handoff (summary, filesChanged) + founder-approved intent contract; update-in-place, create only when no existing home; HARD BOUNDARIES never edit code / never AGENTS.md / write nothing if nothing needs documenting; end with machine line 'DOC-ER: UPDATED <paths>' or 'DOC-ER: NONE <reason>'.",
+    "docdrift.ts: new pure module (node-builtin-only, no pi imports). Export a parser for the DOC-ER line and a detectDocDrift(changedCodePaths, docFilesWithRefs, updatedDocPaths) that flags docs referencing a changed code path that doc-er did NOT update this task; advisory-only output (list of stale doc files).",
+    "index.ts: add a doc-er task builder (reusing formatIntentContract + readPersistedPlannerDraft for the intent contract and readShipHandoffContext/dev handoff for summary+filesChanged) near reviewerTaskFor (index.ts:591).",
+    "index.ts: wire the stage in the pre-ship success branch AFTER the judge loop completes (no reopen) and the pre_ship_passed log, BEFORE state.state = 'awaiting_ship' (index.ts:2073-2075). Run loadAgent('doc-er') via runAgentWithTimeout with role 'doc-er'; wrap in try/catch + stopSpinner finally; on timeout/error/non-zero exit appendLog a doc_er_* event + writeActivity flag note and PROCEED (never reopen, never block). Parse the DOC-ER line; appendLog the updated paths.",
+    "index.ts: run detectDocDrift over the task's changed code paths and repo doc files vs doc-er's updated paths; appendLog a doc_drift event with any stale-doc list.",
+    "index.ts: surface doc-er outcome (UPDATED <paths> / NONE / TIMED-OUT) and any drift warning ('docs may be stale: <files>') in the Gate 2 emit (index.ts:2078-2090) and in the gate2_awaiting ledger event; do NOT add a DoD blocker in done.ts.",
+    "index.ts: extend readShipHandoffContext (index.ts:927) to fold doc-er updated paths (from the doc_er log event) into filesChanged so resolveStagePaths stages them path-scoped at release; preserve never-whole-tree semantics.",
+    "test/planner_timeout_test.sh: extend with resolveAgentTimeouts(env,'doc-er') default 180000/720000 and FOREMAN_DOC_ER_IDLE_MS/_MAX_MS overrides (already in verify path).",
+    "test/docdrift_test.sh: new headless test — changed code path referenced by an un-updated doc -> flagged; updated doc -> not flagged; unreferenced -> not flagged; plus DOC-ER line parsing.",
+    "test/doc_er_test.sh: new headless grep-guard — index.ts invokes doc-er via runAgentWithTimeout in the pre-ship success path with graceful degradation and before awaiting_ship; doc-er.md has model high, docs-only tools allowlist, never-AGENTS.md / never-code boundaries, and the DOC-ER machine line.",
+    "Extend the .pi/foreman.json verify gate command to also run docdrift_test.sh and doc_er_test.sh so the new tests run under the per-round gate; preserve all existing test invocations and greps (xhigh planner model line, planner/gates/reviewer/guard/fallback/ledger/reader).",
+    "Run the full verify suite headlessly to confirm all existing + new tests stay green (extractJsonBlock regression, intent injection, model-line greps, planner/reviewer budgets)."
+  ],
+  "filesLikely": [
+    "extensions/foreman/crew/doc-er.md",
+    "extensions/foreman/agent-timeouts.ts",
+    "extensions/foreman/docdrift.ts",
+    "extensions/foreman/index.ts",
+    "extensions/foreman/test/docdrift_test.sh",
+    "extensions/foreman/test/doc_er_test.sh",
+    "extensions/foreman/test/planner_timeout_test.sh",
+    ".pi/foreman.json",
+    "extensions/foreman/docs/INTERNALS.md"
+  ],
+  "risks": [
+    "Gate 2 emit/ledger surfacing must be additive and advisory: do NOT touch done.ts/evaluateDoneness so doc-er/drift never becomes a hard DoD blocker (INTERNALS 07; index.ts:1541-1555).",
+    "Retry-context footgun (INTERNALS 09): doc-er runs only on the terminal APPROVE->Gate 2 transition (post-loop), so it should NOT be injected into the per-round devContext; ensure it does not fire on reopen paths.",
+    "Staging: doc-er paths must merge into filesChanged via readShipHandoffContext so resolveStagePaths keeps path-scoped staging; never git add -A (INTERNALS 09; ship.ts:110-145).",
+    "Quota safety: doc-er is cliproxy -> must go through the runAgent --append-system-prompt seam (index.ts:258), never --system-prompt.",
+    "Purity: agent-timeouts.ts and the new docdrift.ts must stay node-builtin-only with no pi SDK/TUI imports (INTERNALS 09).",
+    "doc-er has edit/write tools; docs-only is enforced only by the tools allowlist + prompt boundaries + the guard's prose/docs no-impact rule — there is no hard runtime path-confinement, so the prompt boundaries and grep-guard test are the safeguard against editing code or AGENTS.md.",
+    "Verify gate runs only a subset of test/*.sh; new tests are inert unless appended to the verify command, so the .pi/foreman.json command edit is required for the per-round gate to cover them.",
+    "Assumption: doc-er runs once per ship, not per round; if multiple pre-ship judge gates exist it must run once after all approve.",
+    "decideAgentTimeoutDegradation currently returns the reviewer branch as its default fall-through; adding 'doc-er' there needs an explicit benign 'none'/proceed mapping so a doc-er timeout is not mis-degraded as a reviewer-inconclusive."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh && bash extensions/foreman/test/docdrift_test.sh && bash extensions/foreman/test/doc_er_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [
+      {
+        "name": "FOREMAN_DOC_ER_IDLE_MS",
+        "reason": "new optional override for doc-er idle timeout (default 180000)"
+      },
+      {
+        "name": "FOREMAN_DOC_ER_MAX_MS",
+        "reason": "new optional override for doc-er max runtime (default 720000)"
+      },
+      {
+        "name": "FOREMAN_CREW",
+        "reason": "existing crew-subprocess marker set by transport; doc-er runs as crew"
+      },
+      {
+        "name": "PI_CODING_AGENT_DIR",
+        "reason": "existing optional charter location read by crew agents"
+      }
+    ],
+    "tools": [
+      {
+        "name": "node",
+        "reason": "headless tests run via node --input-type=module importing .ts modules"
+      },
+      {
+        "name": "bash",
+        "reason": "test scripts and command gate are bash"
+      },
+      {
+        "name": "git",
+        "reason": "release commit action stages path-scoped changes incl. doc-er doc paths"
+      },
+      {
+        "name": "grep",
+        "reason": "verify gate greps model lines and source for guard assertions"
+      },
+      {
+        "name": "pi",
+        "reason": "crew subprocess transport that launches the doc-er agent"
+      }
+    ],
+    "services": [
+      {
+        "name": "cliproxy",
+        "reason": "model routing for doc-er (cliproxy/claude-opus-4-8:high); append-only prompt required for quota safety"
+      }
+    ]
+  }
+}

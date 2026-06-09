@@ -1,0 +1,69 @@
+{
+  "summary": "Flow the Gate-1 founder-approved understanding/assumptions/non-goals down to the crew: add a pure formatIntentContract(plan) helper in planner.ts and inject its compact output into the developer's devContext and the tester's testerTask after Gate 1 approval, mirroring the existing formatResolvedDecisions injection so the crew builds and judges against the confirmed intent (and does not fail work for deliberately-omitted non-goals). Optional and back-compatible: legacy/no-plan and content-free plans inject nothing.",
+  "assumptions": [],
+  "nonGoals": [],
+  "alternatives": [],
+  "blastRadius": [],
+  "steps": [
+    "planner.ts (~line 343, beside renderFounderPlan): add pure formatIntentContract(plan: PlannerPlan): string rendering ONLY understanding + assumptions (with optional confidence, reusing hasContent) + nonGoals; return \"\" when all three are empty; deliberately exclude steps/risks/filesLikely/blastRadius/alternatives. Stays node-builtin-only.",
+    "index.ts (import block ~60-68): add formatIntentContract to the existing ./planner.ts import.",
+    "index.ts (~1477-1479, after the state.gate1Approved check and before devContext init): read the persisted plan via readPersistedPlannerDraft(cwd, slug) (null-safe; on null inject nothing) and compute the intent contract ONCE.",
+    "index.ts (round loop ~1599, where decisionsForDev is re-attached): frame the dev block as 'Founder-approved intent (build to THIS):' and append it to devContext alongside decisionsForDev each round, so the fail-retry devContext rebuild (~2097) never drops it; the initial round-1 devContext (~1479) thereby also carries it.",
+    "index.ts (~1768-1776, testerTask): lazily append the intent block (mirroring decisionsForTester) framed so the tester judges against the confirmed intent AND does NOT FAIL the work for deliberately-omitted non-goal items.",
+    "crew/developer.md and crew/tester.md: append one short line each acknowledging that a present 'Founder-approved intent' block is the source of truth for what to build/judge and that non-goals are intentionally out of scope (append-only; no restructure).",
+    "test/planner_test.sh: add formatIntentContract cases (renders understanding + assumptions with/without confidence + nonGoals; returns \"\" when all three empty; excludes steps/risks/blastRadius/alternatives even when populated) and grep-wiring asserts that index.ts injects the intent block into BOTH devContext and testerTask and re-attaches it on fail-retry rounds, mirroring the existing extractJsonBlock grep style; preserve all existing assertions.",
+    "Run the existing per-round verify gate (full headless suite) and confirm all foreman tests stay green."
+  ],
+  "filesLikely": [
+    "extensions/foreman/planner.ts",
+    "extensions/foreman/index.ts",
+    "extensions/foreman/crew/developer.md",
+    "extensions/foreman/crew/tester.md",
+    "extensions/foreman/test/planner_test.sh"
+  ],
+  "risks": [
+    "The tester-FAIL devContext rebuild at index.ts:2097 (and the pre-ship/timeout/decision rebuilds at ~1496/1513/1531/1689/1914/2019) replace devContext wholesale; the intent block must be re-attached inside the round loop (like decisionsForDev at ~1599), not only in the initial literal at ~1479, or it is lost after round 1.",
+    "Back-compat: formatIntentContract must return \"\" for fallback/legacy plans lacking understanding-layer content, and readPersistedPlannerDraft returns null on missing/corrupt plan.json — both must inject nothing and never throw.",
+    "Compactness/token budget: the block must include only understanding/assumptions/nonGoals (asserted by new exclusion tests); do not leak steps/risks/blastRadius/alternatives.",
+    "Must not disturb existing planner_test.sh assertions (extractJsonBlock regression, model-line grep, render section tests) or the gates/ledger/reviewer/fallback/guard suites run by the verify gate.",
+    "Read-only recon: cited line numbers are approximate and may shift slightly during implementation."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [
+      {
+        "name": "node",
+        "reason": "runs the headless planner_test.sh harness (node --input-type=module) imported by the verify gate"
+      },
+      {
+        "name": "bash",
+        "reason": "executes the per-round verify gate test scripts"
+      },
+      {
+        "name": "grep",
+        "reason": "verify gate greps planner.md and the new tests grep index.ts wiring"
+      }
+    ],
+    "services": []
+  }
+}

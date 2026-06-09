@@ -61,6 +61,7 @@ import {
 	decideManifestWrite,
 	evaluateRequirementPresence,
 	fallbackPlannerPlan,
+	formatIntentContract,
 	renderFounderPlan,
 	serializePlannerPlan,
 	summarizeRequirementChecks,
@@ -1476,6 +1477,11 @@ export default function (pi: ExtensionAPI) {
 
 			if (state.gate1Approved) runRequirementsPreflight();
 
+			const persistedIntentDraft = state.gate1Approved ? readPersistedPlannerDraft(cwd, slug) : null;
+			const intentContract = persistedIntentDraft?.plan ? formatIntentContract(persistedIntentDraft.plan) : "";
+			const intentForDev = intentContract ? `Founder-approved intent (build to THIS):\n${intentContract}` : "";
+			const intentForTester = intentContract ? `Founder-approved intent (judge against THIS; do not FAIL deliberately omitted non-goals):\n${intentContract}` : "";
+
 			let devContext = `Implement this task in ${cwd}:\n${state.task}`;
 			if (isLegacyVerifyGate) {
 				// Legacy no-foreman.json path: keep the developer prompt compatible with the old model.
@@ -1594,10 +1600,11 @@ export default function (pi: ExtensionAPI) {
 				pushStatus();
 				startSpinner();
 				const treeBefore = track === "frontend" ? workingTreeSnapshot(cwd) : null;
-				// Always re-attach founder decisions so a fail-retry round (which rebuilds devContext) never
-				// loses them. Idempotent: the resume branch may already include the latest answer in prose.
+				// Always re-attach founder-approved intent and decisions so a fail-retry round (which rebuilds
+				// devContext) never loses them. Idempotent: resume branches may already include related prose.
 				const decisionsForDev = formatResolvedDecisions(state.resolvedDecisions);
-				const devContextWithDecisions = decisionsForDev ? `${devContext}\n\n${decisionsForDev}` : devContext;
+				const devContextWithIntent = intentForDev ? `${devContext}\n\n${intentForDev}` : devContext;
+				const devContextWithDecisions = decisionsForDev ? `${devContextWithIntent}\n\n${decisionsForDev}` : devContextWithIntent;
 				let implementerTimeout: AgentTimeoutOutcome = { timedOut: false, reason: null };
 				let implementerTimeoutRole: AgentTimeoutRole = "developer";
 				let devOutcome = await runAgentWithTimeout(developer, devContextWithDecisions, cwd, {
@@ -1768,9 +1775,11 @@ export default function (pi: ExtensionAPI) {
 				const decisionsForTester = formatResolvedDecisions(state.resolvedDecisions);
 				const testerTask =
 					`Judge whether the work in ${cwd} satisfies this task: ${state.task}\n\n${verifyInfo}\n\n` +
+					(intentForTester ? `${intentForTester}\n\n` : "") +
 					(decisionsForTester ? `${decisionsForTester}\n\n` : "") +
 					`Read the changed files to confirm the change actually fulfills the task intent (not just that ` +
 					`a command exited 0 — watch for cheats like hardcoding or editing tests). Then emit your VERDICT line.` +
+					(intentForTester ? ` Judge against the Founder-approved intent above; do not FAIL deliberately omitted non-goal items.` : "") +
 					(decisionsForTester
 						? ` A literal value that matches a founder decision above is APPROVED, not a hardcoded cheat — do not FAIL it for being hardcoded.`
 						: "");

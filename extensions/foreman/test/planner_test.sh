@@ -54,6 +54,31 @@ assert.match(foremanIndex, /function toolOnPath\(name: string\)/, "orchestrator 
 assert.match(foremanIndex, /loadRequirements\(cwd\)/, "orchestrator preflights persisted requirements");
 assert.match(foremanIndex, /type: "preflight_checked"/, "orchestrator records requirement preflight checks");
 assert.match(foremanIndex, /requirementGaps/, "orchestrator logs missing or unknown requirement gaps");
+assert.match(foremanIndex, /formatIntentContract\(persistedIntentDraft\.plan\)/, "orchestrator formats the persisted Gate 1 intent contract");
+assert.match(foremanIndex, /Founder-approved intent \(build to THIS\):\\n\$\{intentContract\}/, "developer prompt receives the founder-approved intent block");
+assert.match(
+  foremanIndex,
+  /Founder-approved intent \(judge against THIS; do not FAIL deliberately omitted non-goals\):\\n\$\{intentContract\}/,
+  "tester prompt receives the founder-approved intent block with non-goal framing",
+);
+assert.ok(
+  foremanIndex.includes('const devContextWithIntent = intentForDev ? `${devContext}\\n\\n${intentForDev}` : devContext;'),
+  "developer intent block is lazily appended inside the round loop",
+);
+assert.ok(
+  foremanIndex.includes('const devContextWithDecisions = decisionsForDev ? `${devContextWithIntent}\\n\\n${decisionsForDev}` : devContextWithIntent;'),
+  "developer decisions compose after the intent block",
+);
+assert.match(
+  foremanIndex,
+  /Always re-attach founder-approved intent and decisions[\s\S]*const devContextWithIntent/,
+  "fail-retry devContext rebuilds re-attach the intent block each round",
+);
+assert.match(
+  foremanIndex,
+  /const testerTask =[\s\S]*\(intentForTester \? `\$\{intentForTester\}\\n\\n` : ""\)[\s\S]*\(decisionsForTester \? `\$\{decisionsForTester\}\\n\\n` : ""\)/,
+  "tester intent block is injected before founder decisions",
+);
 
 const verifyGate = { name: "verify", kind: "command", stage: "per-round", command: "npm test" };
 const lintGate = { name: "lint", kind: "command", stage: "pre-ship", command: "npm run lint" };
@@ -175,6 +200,21 @@ assert.deepEqual(
   "alternatives require approach and rejectedReason; malformed entries are dropped",
 );
 assert.deepEqual(understandingPlan.blastRadius, ["Gate 1 markdown rendering", "Planner prompt contract"], "blastRadius normalizes string lists");
+
+const intentContract = planner.formatIntentContract(understandingPlan);
+assert.match(intentContract, /^Understanding:\n- Founder wants Gate 1 to show the task interpretation before code runs\./, "intent contract renders understanding compactly");
+assert.match(intentContract, /Assumptions:\n- Planner helper stays pure and data-only\. \(confidence: high\)\n- Invalid confidence is dropped but the assumption remains\./, "intent contract renders assumptions with and without confidence");
+assert.match(intentContract, /Non-goals:\n- Change the dev\/test\/review loop/, "intent contract renders non-goals");
+assert.doesNotMatch(intentContract, /Inspect planner helpers|Update prompt and tests/, "intent contract excludes steps");
+assert.doesNotMatch(intentContract, /Empty sections must not clutter Gate 1/, "intent contract excludes risks");
+assert.doesNotMatch(intentContract, /extensions\/foreman\/planner\.ts/, "intent contract excludes filesLikely");
+assert.doesNotMatch(intentContract, /Keep only summary and risks|Rewrite the gates engine/, "intent contract excludes alternatives");
+assert.doesNotMatch(intentContract, /Gate 1 markdown rendering|Planner prompt contract/, "intent contract excludes blastRadius");
+assert.equal(
+  planner.formatIntentContract({ ...understandingPlan, understanding: undefined, assumptions: [], nonGoals: [] }),
+  "",
+  "intent contract returns empty string when understanding, assumptions, and non-goals are empty even if planning details are populated",
+);
 
 const fallback = planner.fallbackPlannerPlan({
   task: "Fix calc.add",

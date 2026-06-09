@@ -345,6 +345,22 @@ function renderOptionalSection(heading: string, lines: string[]): string[] {
 	return lines.length ? ["", `## ${heading}`, ...lines] : [];
 }
 
+export function formatIntentContract(plan: PlannerPlan): string {
+	const understanding = cleanOptionalString(plan.understanding);
+	const assumptions = normalizePlannerAssumptions(plan.assumptions);
+	const nonGoals = cleanStringList(plan.nonGoals);
+	const sections: string[] = [];
+	if (understanding) sections.push("Understanding:", `- ${understanding}`);
+	if (assumptions.length) {
+		sections.push(
+			"Assumptions:",
+			...assumptions.map((assumption) => `- ${assumption.text}${assumption.confidence ? ` (confidence: ${assumption.confidence})` : ""}`),
+		);
+	}
+	if (nonGoals.length) sections.push("Non-goals:", ...nonGoals.map((nonGoal) => `- ${nonGoal}`));
+	return sections.join("\n");
+}
+
 function categoryHeading(category: RequirementCategory): string {
 	if (category === "env") return "Env vars/secrets";
 	if (category === "tools") return "CLI tools/binaries";

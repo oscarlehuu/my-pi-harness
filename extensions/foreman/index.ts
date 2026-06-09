@@ -808,7 +808,7 @@ async function runDocErStage(input: {
 		const docTranscript = transcriptFilePath(input.cwd, input.slug, "doc-er", input.round, docSession);
 		writeActivity(input.cwd, input.slug, {
 			round: input.round,
-			phase: "tester",
+			phase: "doc-er",
 			activeTranscript: path.basename(docTranscript),
 			note: "doc-er running…",
 			pid: process.pid,

@@ -335,7 +335,7 @@ export function readActivity(cwd: string, slug: string): ForemanActivity | null 
 
 export type StatuslineGlyph = "running" | "gate" | "escalated" | "done" | "idle";
 
-export type StatuslinePhase = "developer" | "verify" | "tester" | "planner" | "reviewer";
+export type StatuslinePhase = "developer" | "verify" | "tester" | "planner" | "reviewer" | "doc-er";
 
 export type StatuslineStage = "plan" | "dev" | "test" | "fix" | "ship";
 
@@ -394,7 +394,7 @@ function shortLabel(task: string, slug: string, max = 36): string {
 }
 
 function livePhase(phase: ActivityPhase): StatuslinePhase | null {
-	return phase === "developer" || phase === "verify" || phase === "tester" || phase === "planner" || phase === "reviewer" ? phase : null;
+	return phase === "developer" || phase === "verify" || phase === "tester" || phase === "planner" || phase === "reviewer" || phase === "doc-er" ? phase : null;
 }
 
 const PHASE_LABEL: Record<StatuslinePhase, string> = {
@@ -467,10 +467,12 @@ function inferLiveRole(phase: ActivityPhase, transcriptRole?: string, note = "")
 	const normalizedNote = note.toLowerCase();
 	if (role === "planner") return "planner";
 	if (role === "reviewer" || normalizedNote.includes("reviewer") || normalizedNote.includes("pre-ship judge")) return "reviewer";
+	if (role === "doc-er" || normalizedNote.includes("doc-er")) return "doc-er";
 	if (role === "tester") return "tester";
 	if (role === "developer") return "developer";
 	if (phase === "planner") return "planner";
 	if (phase === "reviewer") return "reviewer";
+	if (phase === "doc-er") return "doc-er";
 	if (phase === "verify") return "verify";
 	if (phase === "tester") return "tester";
 	if (phase === "developer") return "developer";
@@ -533,6 +535,7 @@ function statuslineStage(state: string, phase: StatuslinePhase | null, role: str
 	if (normalizedRole === "planner" || phase === "planner") return "plan";
 	if (normalizedRole === "tester" || normalizedRole === "verify" || phase === "tester" || phase === "verify") return "test";
 	if (normalizedRole === "reviewer" || phase === "reviewer") return "test";
+	if (normalizedRole === "doc-er" || phase === "doc-er") return "ship";
 	if (normalizedRole === "developer" || phase === "developer") return round >= 2 ? "fix" : "dev";
 	return undefined;
 }

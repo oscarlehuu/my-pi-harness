@@ -1,0 +1,71 @@
+{
+  "summary": "Task A: add a pure, headless assumption scorer (scorer.ts) that ranks Gate-1 planner assumptions by RISK = P(wrong) x cost, classify a KIND seam (domain-fact->team, preference->founder, with team degrading to founder for now), add a tolerant gates.loadHighRiskPaths(cwd) loader, and surface scores advisorily in renderFounderPlan (reorder + annotate high/medium, byte-identical when no signal). Add scorer_test.sh and wire it into the existing per-round verify gate. Advisory only: no blocking, no DoD change, no PLAN-JSON schema change; team channel/rubber-stamp tiers are out of scope.",
+  "assumptions": [],
+  "nonGoals": [],
+  "alternatives": [],
+  "blastRadius": [],
+  "steps": [
+    "Create extensions/foreman/scorer.ts (pure, node-builtin-only, NO fs): export RiskBand, AssumptionRoute, ScoredAssumption{text,confidence?,risk,route,kind,cost,reasons}; pure scoreAssumption(input) and scoreAssumptions(assumptions, ctx{highRiskPaths,blastRadius,filesLikely,costHints?}); P-from-confidence (low=highP, medium, high=lowP, missing=medium); cost (glob match of highRiskPaths against blastRadius/filesLikely => high authoritative; keyword heuristic backstop payment/auth/migration/delete/secret => medium/high; else low); risk=combine(P,cost) matrix; kind classifier (domain-fact|preference|unknown); route (domain-fact+risky=>team, risky=>founder, low=>self) keeping team in data; minimal pure glob matcher helper.",
+    "gates.ts: add loadHighRiskPaths(cwd): string[] mirroring loadRequirements/loadGates (read optional highRiskPaths:string[] from .pi/foreman.json; missing/malformed => []). Stay pure/node-builtin-only.",
+    "planner.ts: add optional highRiskPaths to PlannerContext; in renderFounderPlan call scoreAssumptions({highRiskPaths: ctx.highRiskPaths ?? [], blastRadius: plan.blastRadius ?? [], filesLikely: plan.filesLikely}); stable-sort risk-desc and annotate high/medium assumptions with a '[!] verify this' marker + one-line reason while leaving low-risk lines in original format/order. Additive only: never remove assumptions content; when no assumptions or all-low (no signal), render exactly as today.",
+    "index.ts: compute gates.loadHighRiskPaths(cwd) and pass it into the renderFounderPlan PlannerContext at the Gate-1 render call (index.ts:1705).",
+    "Add extensions/foreman/test/scorer_test.sh (headless node --input-type=module) covering: high-confidence+no high-risk path => risk low/route self; low-confidence+blastRadius matches highRiskPaths glob => risk high/route founder|team; medium and missing-confidence(=medium P) cases; kind classifier (domain-fact=>team, preference/scope=>founder); glob matcher match/non-match; loadHighRiskPaths missing/malformed/valid; and a grep-guard asserting planner.ts/index.ts wire scoreAssumptions + loadHighRiskPaths.",
+    "Wire scorer_test.sh into the .pi/foreman.json per-round verify gate command (append to the existing chain; do not overwrite other gates). Keep scorer out of dev/test/review loop and DoD.",
+    "Run the per-round verify gate (full headless suite incl. scorer_test.sh) and keep all existing tests green; pre-ship reviewer + soft doc-er run at the end as usual (INTERNALS.md module-map row for scorer.ts left to the doc-er stage)."
+  ],
+  "filesLikely": [
+    "extensions/foreman/scorer.ts",
+    "extensions/foreman/gates.ts",
+    "extensions/foreman/planner.ts",
+    "extensions/foreman/index.ts",
+    "extensions/foreman/test/scorer_test.sh",
+    ".pi/foreman.json",
+    "extensions/foreman/docs/INTERNALS.md"
+  ],
+  "risks": [
+    "Back-compat: planner_test.sh:351 asserts the Assumptions section text/order; the annotate+reorder must be a no-op when there is no scorer signal (no highRiskPaths, all-low risk) so existing renders stay byte-identical. Mitigate with stable risk-desc sort + original line format for low risk.",
+    "scorer_test.sh does not exist yet; it is a deliverable of this task. The extended verify gate will fail until the file is created, which is expected during implementation.",
+    "Keeping scorer.ts strictly fs-free requires threading highRiskPaths through PlannerContext (computed in index.ts), not reading inside planner.ts; otherwise planner.ts purity (NEVER add fs/pi imports to pure helpers) is violated.",
+    "Editing .pi/foreman.json verify command risks clobbering the existing chain; only append scorer_test.sh and leave review/commit gates untouched.",
+    "Scope creep risk: must NOT build the team channel, paste-back, assume-unless-vetoed, or rubber-stamp tiers; only leave the 'team' route value as a seam.",
+    "Reorder must remain advisory: do not change PLAN-JSON schema, do not block Gate 1/2, do not touch DoD or models.json/crew model assignments."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/docer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh && bash extensions/foreman/test/scorer_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [
+      {
+        "name": "node",
+        "reason": "headless tests run via `node --input-type=module` importing the .ts pure modules directly"
+      },
+      {
+        "name": "bash",
+        "reason": "test scripts and the verify gate command are bash"
+      },
+      {
+        "name": "git",
+        "reason": "release commit action gate stages changed paths"
+      }
+    ],
+    "services": []
+  }
+}

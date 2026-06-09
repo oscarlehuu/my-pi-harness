@@ -24,6 +24,7 @@ import {
 	type AgentTimeoutReason,
 	type AgentTimeouts,
 } from "./agent-timeouts.ts";
+import { scoreAssumptions, type AssumptionCostHints, type RiskBand, type ScoredAssumption } from "./scorer.ts";
 
 export const PLAN_JSON_START = "---PLAN-JSON---";
 export const PLAN_JSON_END = "---END-PLAN-JSON---";
@@ -33,6 +34,7 @@ export type PlannerSource = "planner" | "fallback" | "persisted";
 export interface ForemanManifest {
 	gates: Gate[];
 	requirements?: TaskRequirements;
+	highRiskPaths?: string[];
 }
 
 export type PlannerAssumptionConfidence = "low" | "medium" | "high";
@@ -88,6 +90,12 @@ export interface PlannerContext {
 	/** True only for a valid parsed planner PLAN-JSON; fallback/template plans must pass false. */
 	manifestWriteEligible?: boolean;
 	requirementChecks?: RequirementCheck[];
+	/** Presence means Gate 1 should use the advisory assumption scorer; empty array is valid. */
+	highRiskPaths?: string[];
+	/** Optional plan-level assumption cost hint, supplied by callers without changing PLAN-JSON. */
+	assumptionCostHint?: RiskBand;
+	/** Optional per-assumption cost hints, supplied by callers without changing PLAN-JSON. */
+	assumptionCostHints?: AssumptionCostHints;
 }
 
 export type Presence = "present" | "missing" | "unknown";
@@ -413,6 +421,46 @@ function renderRequirementChecks(checks: RequirementCheck[]): string[] {
 	return lines;
 }
 
+function hasAssumptionScorerSignal(context: PlannerContext): boolean {
+	return (
+		Object.prototype.hasOwnProperty.call(context, "highRiskPaths") ||
+		context.assumptionCostHint !== undefined ||
+		context.assumptionCostHints !== undefined
+	);
+}
+
+function primaryAssumptionReason(scored: ScoredAssumption): string {
+	return (
+		scored.reasons.find((reason) => /highRiskPaths|keyword signal|caller cost hint/.test(reason)) ??
+		scored.reasons.find((reason) => reason.startsWith("risk ")) ??
+		scored.reasons[0] ??
+		"scored by risk"
+	);
+}
+
+function renderScoredAssumption(scored: ScoredAssumption): string {
+	const confidence = scored.confidence ? `confidence: ${scored.confidence}` : "confidence: missing";
+	const route = scored.route === "team" ? "team→founder for now" : scored.route;
+	const meta = `${confidence}; risk: ${scored.risk}; cost: ${scored.cost}; kind: ${scored.kind}; route: ${route}`;
+	if (scored.risk === "high") return `- [!] verify this: ${scored.text} _(${meta})_ — ${primaryAssumptionReason(scored)}`;
+	if (scored.risk === "medium") return `- [?] check if uncertain: ${scored.text} _(${meta})_ — ${primaryAssumptionReason(scored)}`;
+	return `- (low risk) ${scored.text} _(${meta})_`;
+}
+
+function renderAssumptions(plan: PlannerPlan, context: PlannerContext): string[] {
+	if (!hasContent(plan.assumptions)) return [];
+	if (!hasAssumptionScorerSignal(context)) {
+		return plan.assumptions.map((assumption) => `- ${assumption.text}${assumption.confidence ? ` _(confidence: ${assumption.confidence})_` : ""}`);
+	}
+	return scoreAssumptions(plan.assumptions, {
+		highRiskPaths: context.highRiskPaths ?? [],
+		blastRadius: plan.blastRadius ?? [],
+		filesLikely: plan.filesLikely ?? [],
+		costHint: context.assumptionCostHint,
+		costHints: context.assumptionCostHints,
+	}).map(renderScoredAssumption);
+}
+
 export function renderFounderPlan(plan: PlannerPlan, context: PlannerContext): string {
 	const decision = decideManifestWrite({
 		manifestExists: context.manifestExists === true,
@@ -426,9 +474,7 @@ export function renderFounderPlan(plan: PlannerPlan, context: PlannerContext): s
 	const requirements = renderRequirementChecks(requirementChecks);
 	const gates = plan.proposedGates.length ? plan.proposedGates.map(formatGate) : ["- (none proposed)"];
 	const understanding = plan.understanding ? [plan.understanding] : [];
-	const assumptions = hasContent(plan.assumptions)
-		? plan.assumptions.map((assumption) => `- ${assumption.text}${assumption.confidence ? ` _(confidence: ${assumption.confidence})_` : ""}`)
-		: [];
+	const assumptions = renderAssumptions(plan, context);
 	const nonGoals = (plan.nonGoals ?? []).map((nonGoal) => `- ${nonGoal}`);
 	const alternatives = hasContent(plan.alternatives)
 		? plan.alternatives.map((alternative) => `- ${alternative.approach} — rejected because ${alternative.rejectedReason}`)

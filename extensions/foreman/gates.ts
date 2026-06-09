@@ -75,6 +75,10 @@ function normalizePaths(value: unknown): string[] | undefined {
 	return paths.length ? paths : undefined;
 }
 
+function normalizeStringList(value: unknown): string[] {
+	return normalizePaths(value) ?? [];
+}
+
 function emptyRequirements(): TaskRequirements {
 	return { env: [], tools: [], services: [] };
 }
@@ -152,6 +156,18 @@ export function loadRequirements(cwd: string): TaskRequirements {
 		return isRecord(parsed) ? normalizeRequirements(parsed.requirements) : emptyRequirements();
 	} catch {
 		return emptyRequirements();
+	}
+}
+
+export function loadHighRiskPaths(cwd: string): string[] {
+	const configPath = path.join(cwd, ".pi", "foreman.json");
+	if (!fs.existsSync(configPath)) return [];
+
+	try {
+		const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+		return isRecord(parsed) ? normalizeStringList(parsed.highRiskPaths) : [];
+	} catch {
+		return [];
 	}
 }
 

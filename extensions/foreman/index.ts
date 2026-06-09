@@ -49,6 +49,7 @@ import {
 	type Gate,
 	gatesForStage,
 	loadGates,
+	loadHighRiskPaths,
 	loadRequirements,
 	runCommandGates,
 } from "./gates.ts";
@@ -1716,6 +1717,7 @@ export default function (pi: ExtensionAPI) {
 						plannerSource: drafted.source,
 						manifestWriteEligible: drafted.source === "planner",
 						requirementChecks,
+						highRiskPaths: loadHighRiskPaths(cwd),
 					});
 					fs.writeFileSync(path.join(taskDir(cwd, slug), "plan.md"), `${plan}\n`);
 					state.state = "planning";

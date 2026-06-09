@@ -443,8 +443,10 @@ function renderScoredAssumption(scored: ScoredAssumption): string {
 	const confidence = scored.confidence ? `confidence: ${scored.confidence}` : "confidence: missing";
 	const route = scored.route === "team" ? "team→founder for now" : scored.route;
 	const meta = `${confidence}; risk: ${scored.risk}; cost: ${scored.cost}; kind: ${scored.kind}; route: ${route}`;
-	if (scored.risk === "high") return `- [!] verify this: ${scored.text} _(${meta})_ — ${primaryAssumptionReason(scored)}`;
-	if (scored.risk === "medium") return `- [?] check if uncertain: ${scored.text} _(${meta})_ — ${primaryAssumptionReason(scored)}`;
+	const unsubstantiated = scored.risk !== "low" && scored.unsubstantiated === true;
+	const evidenceNote = unsubstantiated ? " [unsubstantiated — verify or downgrade]" : "";
+	if (scored.risk === "high") return `- [!] verify this: ${scored.text}${evidenceNote} _(${meta})_ — ${primaryAssumptionReason(scored)}`;
+	if (scored.risk === "medium") return `- [?] check if uncertain: ${scored.text}${evidenceNote} _(${meta})_ — ${primaryAssumptionReason(scored)}`;
 	return `- (low risk) ${scored.text} _(${meta})_`;
 }
 

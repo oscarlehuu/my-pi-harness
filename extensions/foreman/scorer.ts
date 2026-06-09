@@ -24,6 +24,8 @@ export interface ScoredAssumption {
 	kind: AssumptionKind;
 	cost: RiskBand;
 	reasons: string[];
+	/** Advisory marker: medium/high risk but no concrete evidence/consequence was supplied. */
+	unsubstantiated?: boolean;
 }
 
 export type AssumptionCostHints = Array<RiskBand | undefined> | Record<string, RiskBand | undefined>;
@@ -62,6 +64,11 @@ const MEDIUM_COST_KEYWORDS: Array<{ label: string; pattern: RegExp }> = [
 	{ label: "configuration/routing", pattern: /\b(?:config|configuration|routing|route|session|feature\s+flag)\b/i },
 ];
 
+const FILE_LINE_PATTERN = /\b(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+:\d+(?::\d+)?\b/;
+const QUOTED_TOKEN_PATTERN = /(?:`[^`\n]+`|"[^"\n]+"|'[^'\n]+')/;
+const PATH_PATTERN = /\b(?:(?:\.{1,2}\/)?(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|mdx|py|rb|go|rs|java|kt|swift|sql|yml|yaml|toml|sh|bash|zsh|css|scss|html|txt))(?::\d+(?::\d+)?)?\b/i;
+const CONSEQUENCE_KEYWORD_PATTERN = /\b(?:double[-\s]?charge|data[-\s]?loss|prod(?:uction)?|migrations?|migrate|breaks?|broken|outage|downtime|security|auth(?:entication|orization)?|payments?|billing|invoices?|secrets?|credentials?|tokens?|delete|deletion|destructive|drop|rollback|schema)\b/i;
+
 function cleanString(value: string): string {
 	return value.replace(/\s+/g, " ").trim();
 }
@@ -69,6 +76,31 @@ function cleanString(value: string): string {
 function cleanStringList(values: string[] | undefined): string[] {
 	if (!Array.isArray(values)) return [];
 	return values.filter((value): value is string => typeof value === "string").map(cleanString).filter(Boolean);
+}
+
+/**
+ * Verifiable-claim discipline for risky Gate-1 items.
+ *
+ * True when the item or its caller-supplied evidence reasons include concrete evidence (file:line,
+ * quoted token, path) or a named consequence keyword. Empty importance words alone ("important",
+ * "risky", "high impact") deliberately return false so Gate 1 can label the item unsubstantiated
+ * instead of laundering it. Do not pass internal scorer classification labels as evidence.
+ */
+export function hasVerifiableEvidence(reasons: string[], text: string): boolean {
+	const haystack = cleanStringList([text, ...(Array.isArray(reasons) ? reasons : [])]).join("\n");
+	if (!haystack) return false;
+	return (
+		FILE_LINE_PATTERN.test(haystack) ||
+		QUOTED_TOKEN_PATTERN.test(haystack) ||
+		PATH_PATTERN.test(haystack) ||
+		CONSEQUENCE_KEYWORD_PATTERN.test(haystack)
+	);
+}
+
+function verifiableEvidenceReasons(reasons: string[]): string[] {
+	// These are derived by the scorer, but they expose a concrete caller-supplied path match.
+	// Keyword/cost/kind labels are classifier metadata, not evidence for the claim itself.
+	return reasons.filter((reason) => reason.startsWith("highRiskPaths matched "));
 }
 
 function normalizeBand(value: unknown): RiskBand | undefined {
@@ -258,6 +290,13 @@ export function scoreAssumption(input: ScoreAssumptionInput): ScoredAssumption {
 	const risk = combineRisk(probabilityWrong, cost);
 	const route = routeFor(kind, risk);
 	const confidenceLabel = confidence ?? "missing";
+	const reasons = [
+		`confidence ${confidenceLabel} -> ${probabilityWrong} P(wrong)`,
+		...costReasons,
+		`risk ${risk}: ${probabilityWrong} P(wrong) x ${cost} cost`,
+		`kind ${kind} -> route ${route}`,
+	];
+	const unsubstantiated = risk !== "low" && !hasVerifiableEvidence(verifiableEvidenceReasons(costReasons), assumption.text);
 	return {
 		text: assumption.text,
 		...(confidence ? { confidence } : {}),
@@ -265,12 +304,8 @@ export function scoreAssumption(input: ScoreAssumptionInput): ScoredAssumption {
 		route,
 		kind,
 		cost,
-		reasons: [
-			`confidence ${confidenceLabel} -> ${probabilityWrong} P(wrong)`,
-			...costReasons,
-			`risk ${risk}: ${probabilityWrong} P(wrong) x ${cost} cost`,
-			`kind ${kind} -> route ${route}`,
-		],
+		reasons,
+		...(unsubstantiated ? { unsubstantiated: true } : {}),
 	};
 }
 

@@ -72,6 +72,29 @@ const keywordHighCost = scorer.scoreAssumption({
 assert.equal(keywordHighCost.cost, "high", "keyword heuristic is the high-cost backstop");
 assert.equal(keywordHighCost.risk, "high", "keyword high cost can make a medium-confidence assumption high risk");
 
+// Verifiable-claim discipline: evidence/concrete consequence is required for risky claims to ride unmarked.
+assert.equal(scorer.hasVerifiableEvidence(["See extensions/foreman/index.ts:1530"], ""), true, "file:line is verifiable evidence");
+assert.equal(scorer.hasVerifiableEvidence(["Must pass the `SHIP slug` token"], ""), true, "quoted tokens are verifiable evidence");
+assert.equal(scorer.hasVerifiableEvidence([], "Change touches extensions/foreman/index.ts"), true, "paths are verifiable evidence");
+assert.equal(scorer.hasVerifiableEvidence([], "Failure could double-charge customers"), true, "named consequences are verifiable evidence");
+assert.equal(scorer.hasVerifiableEvidence([], "Could cause data loss in prod during a migration"), true, "prod/data-loss/migration consequences are verifiable evidence");
+assert.equal(scorer.hasVerifiableEvidence(["this is important", "high impact"], "This seems risky"), false, "bare importance words are not verifiable evidence");
+
+const unsubstantiatedRisk = scorer.scoreAssumption({
+  assumption: { text: "This is important.", confidence: "low" },
+  ctx: { costHint: "high" },
+});
+assert.equal(unsubstantiatedRisk.risk, "high", "caller hints can still mark an item risky");
+assert.equal(unsubstantiatedRisk.unsubstantiated, true, "risky items without evidence are marked unsubstantiated");
+const keywordUnsubstantiatedRisk = scorer.scoreAssumption({
+  assumption: { text: "The config seems off here.", confidence: "low" },
+  ctx: { highRiskPaths: [], blastRadius: [], filesLikely: [] },
+});
+assert.equal(keywordUnsubstantiatedRisk.cost, "medium", "keyword-derived cost can make a claim risky without caller hints");
+assert.equal(keywordUnsubstantiatedRisk.risk, "high", "low confidence + keyword medium cost is high risk");
+assert.equal(keywordUnsubstantiatedRisk.unsubstantiated, true, "internal keyword labels are not treated as verifiable evidence");
+assert.equal(domainHighRisk.unsubstantiated, undefined, "risky items with concrete path evidence are not marked unsubstantiated");
+
 // Ranking: high risk first, low risk last, stable within ties.
 const ranked = scorer.scoreAssumptions(
   [
@@ -152,6 +175,53 @@ assert.ok(
   "high-risk assumptions render before low-risk assumptions",
 );
 assert.match(rendered, /route: team→founder for now/, "team route degrades to founder-visible surfacing in Task A");
+
+const unsubstantiatedRendered = planner.renderFounderPlan({
+  summary: "Flag weak evidence.",
+  assumptions: [{ text: "This is important.", confidence: "low" }],
+  nonGoals: [],
+  alternatives: [],
+  blastRadius: [],
+  steps: ["Score", "Render"],
+  filesLikely: [],
+  risks: [],
+  proposedGates: [],
+  requirements: { env: [], tools: [], services: [] },
+}, {
+  task: "Flag weak evidence",
+  cwd: "/tmp/repo",
+  track: "backend",
+  maxRounds: 3,
+  manifestExists: true,
+  plannerSource: "planner",
+  manifestWriteEligible: true,
+  highRiskPaths: [],
+  assumptionCostHint: "high",
+});
+assert.match(unsubstantiatedRendered, /This is important\. \[unsubstantiated — verify or downgrade\]/, "Gate 1 annotates risky items that lack verifiable evidence");
+
+const keywordUnsubstantiatedRendered = planner.renderFounderPlan({
+  summary: "Flag keyword-only weak evidence.",
+  assumptions: [{ text: "The config seems off here.", confidence: "low" }],
+  nonGoals: [],
+  alternatives: [],
+  blastRadius: [],
+  steps: ["Score", "Render"],
+  filesLikely: [],
+  risks: [],
+  proposedGates: [],
+  requirements: { env: [], tools: [], services: [] },
+}, {
+  task: "Flag keyword-only weak evidence",
+  cwd: "/tmp/repo",
+  track: "backend",
+  maxRounds: 3,
+  manifestExists: true,
+  plannerSource: "planner",
+  manifestWriteEligible: true,
+  highRiskPaths: [],
+});
+assert.match(keywordUnsubstantiatedRendered, /The config seems off here\. \[unsubstantiated — verify or downgrade\]/, "Gate 1 annotates keyword-cost risky items without external evidence");
 
 const backCompatRendered = planner.renderFounderPlan(scoredPlan, {
   task: "Score assumptions",

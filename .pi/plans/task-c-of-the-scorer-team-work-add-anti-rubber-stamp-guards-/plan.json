@@ -1,0 +1,131 @@
+{
+  "summary": "Add three anti-rubber-stamp guards (Tiers 1, 2, 4) — verifiable-claim discipline, a planner self-resolve stance, and a pure cost-asymmetry approval-friction module wired into the Gate-2 elevated-ship confirm path — leaving Tier 3 calibration deferred.",
+  "understanding": "Stop autopilot approvals: risky Gate-1 items must carry concrete evidence or be flagged [unsubstantiated]; the planner must try to resolve a question itself before raising it; and high-risk-path Gate-2 ships must require a deliberate confirm token instead of one-tap approve, while normal ships stay one-tap. All advisory except Tier 4's elevated-ship gate; no Tier 3, no DoD or Gate-1 friction changes.",
+  "assumptions": [
+    {
+      "text": "decideApprovalFriction stays fs-free and pure by taking highRiskPaths + changedPaths as input; index.ts calls gates.loadHighRiskPaths(cwd) and assembles plan.filesLikely/blastRadius + dev filesChanged, mirroring scorer.ts's caller-supplies-data contract.",
+      "confidence": "high"
+    },
+    {
+      "text": "hasVerifiableEvidence and the [unsubstantiated] Gate-1 annotation belong in scorer.ts + planner.ts:renderFounderPlan (advisory render layer), reusing the existing scorer signal path rather than touching index.ts Gate-1 approval.",
+      "confidence": "high"
+    },
+    {
+      "text": "The confirm token is enforced only in the resume approve branch at index.ts:1826 (the single place a ship is consummated); the banner/required phrasing is added to the Gate-2 approval-needed emits at index.ts:1855 and index.ts:2395 and the re-emit; in-loop block at index.ts:2382 needs no enforcement since it only sets awaiting_ship.",
+      "confidence": "high"
+    },
+    {
+      "text": "approvalfriction_test.sh is appended to the existing .pi/foreman.json verify command chain in place; the three existing gates are otherwise unchanged and not overwritten via Gate-1 manifest write.",
+      "confidence": "high"
+    },
+    {
+      "text": "Elevated friction is dormant until highRiskPaths is configured in .pi/foreman.json (repo currently has none); tests pass globs in directly so coverage does not depend on repo config.",
+      "confidence": "medium"
+    },
+    {
+      "text": "globMatches is already exported from scorer.ts, so no new glob export is needed; approvalfriction.ts imports it.",
+      "confidence": "high"
+    }
+  ],
+  "nonGoals": [
+    "Tier 3 cross-task calibration / outcome tracking (explicitly deferred to a separate task).",
+    "Any change to DoD checks (done.ts) or to Gate-1 approval friction.",
+    "Adding friction to normal (non-high-risk) Gate-2 ships — they keep one-tap approve:true.",
+    "Touching models.json, crew model assignments, or replacing planner.md's append-only system prompt.",
+    "Duplicating glob logic or moving fs reads into the pure module."
+  ],
+  "alternatives": [
+    {
+      "approach": "Put glob matching + highRiskPaths loading inside approvalfriction.ts.",
+      "rejectedReason": "loadHighRiskPaths uses fs and globMatches already exists; the pure module must stay node-builtin/fs-free, so index.ts supplies data and the module imports globMatches."
+    },
+    {
+      "approach": "Enforce the confirm token in the in-loop Gate-2 block at index.ts:2382 too.",
+      "rejectedReason": "That block only sets awaiting_ship and returns; approval is always consummated via the resume branch at index.ts:1826, so a single enforcement point keeps it deterministic and minimal."
+    },
+    {
+      "approach": "Make Tier 1 hard-block risky items lacking evidence.",
+      "rejectedReason": "Founder-approved design says Tier 1 is advisory: annotate [unsubstantiated — verify or downgrade], do not block."
+    }
+  ],
+  "blastRadius": [
+    "extensions/foreman/index.ts Gate-2 resume/emit paths (1826/1855/2382/2395) and LoopParams param parsing.",
+    "extensions/foreman/planner.ts renderFounderPlan assumption surfacing (advisory annotation only).",
+    "extensions/foreman/scorer.ts public surface (new exported helper) — must not break existing scorer_test grep guards.",
+    "extensions/foreman/crew/planner.md system prompt (append-only).",
+    ".pi/foreman.json verify command chain (must stay green across all existing tests)."
+  ],
+  "steps": [
+    "Read planner.ts:renderFounderPlan, the LoopParams/execute param area, and tester.md/reviewer.md default-refuted stance to fix exact insertion points before editing.",
+    "Tier 4 core: add pure extensions/foreman/approvalfriction.ts exporting decideApprovalFriction({ changedPaths, highRiskPaths }) -> { level: 'normal'|'elevated'; matchedPaths; reason }, importing globMatches from scorer.ts; node-builtin-only, no fs/SDK.",
+    "Tier 1: add hasVerifiableEvidence(reasons, text) to scorer.ts (true on file:line, quoted token, path, or consequence keyword e.g. double-charge/data loss/prod/migration/breaks); consume it in planner.ts:renderFounderPlan to annotate risky-but-unsubstantiated items '[unsubstantiated — verify or downgrade]' (advisory, additive — remove nothing).",
+    "Tier 2: append a default-refuted-style 'resolve it yourself first' self-gate to crew/planner.md (read one more file/check history; only surface a team/founder question if unresolved AND it has verifiable evidence AND a busy expert could answer in one line); prompt-only, append-only.",
+    "Tier 4 wiring: add confirm:string to LoopParams; in index.ts Gate-2 compute friction via loadHighRiskPaths(cwd) + readPersistedPlannerDraft (filesLikely/blastRadius) + readShipHandoffContext (filesChanged); when elevated, show the '⚠ HIGH-RISK CHANGE …' banner + required confirm phrasing in the approval-needed emits; in the resume approve branch (index.ts:1826) require a matching confirm token (e.g. 'SHIP <slug>') — when missing/mismatched, re-emit banner+phrasing and return WITHOUT marking done or committing; normal ships keep one-tap approve.",
+    "Tests: add extensions/foreman/test/approvalfriction_test.sh (elevated+matchedPaths on high-risk touch, normal otherwise, glob correctness) following the scorer_test.sh harness; extend scorer_test.sh with hasVerifiableEvidence cases + grep-guards that index.ts parses params.confirm and re-emits when elevated-without-token and that planner.md has the Tier-2 instruction; preserve all existing assertions.",
+    "Append approvalfriction_test.sh to the existing .pi/foreman.json verify command chain (in place; other gates unchanged).",
+    "Run the full headless suite locally; keep everything green. Update docs/INTERNALS.md (new module row, approvalfriction recipe, Gate-2 elevated-confirm + NEVER notes). Pre-ship reviewer + soft doc-er run at the end; note the elevated-confirm phrasing in the handoff."
+  ],
+  "filesLikely": [
+    "extensions/foreman/approvalfriction.ts",
+    "extensions/foreman/scorer.ts",
+    "extensions/foreman/planner.ts",
+    "extensions/foreman/index.ts",
+    "extensions/foreman/crew/planner.md",
+    "extensions/foreman/test/approvalfriction_test.sh",
+    "extensions/foreman/test/scorer_test.sh",
+    "extensions/foreman/docs/INTERNALS.md",
+    ".pi/foreman.json"
+  ],
+  "risks": [
+    "Gate-2 has multiple emit/approve sites (index.ts:1826/1855/2382/2395); missing one would let an elevated ship bypass the confirm or show inconsistent phrasing — enforce only in the 1826 approve branch but mirror the banner/phrasing in every approval-needed emit.",
+    "approvalfriction.ts must not import fs or SDK; pulling loadHighRiskPaths into it would violate the pure-module NEVER rule — keep the fs read in index.ts and pass globs in.",
+    "Editing scorer.ts's exported surface or render strings could break existing scorer_test.sh grep guards; keep changes additive and re-run that test.",
+    "Confirm-token matching must be deterministic (trim/normalize slug-or-token) to avoid a founder being unable to ship an elevated change; keep the phrasing emitted verbatim in the banner.",
+    "Elevated path is untriggered until highRiskPaths is set in .pi/foreman.json, so manual repo behavior is unchanged by default — tests must inject globs to cover the elevated branch.",
+    "planner.md must remain append-only (no --system-prompt, no model changes) per quota-safety constraint.",
+    "Scope creep into Tier 3 must be avoided; no outcome/calibration tracking in this task."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/scorer_test.sh && bash extensions/foreman/test/teampacket_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/docer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [
+      {
+        "name": "node",
+        "reason": "Headless pure tests run via `node --input-type=module` importing the .ts modules directly."
+      },
+      {
+        "name": "bash",
+        "reason": "Test harness scripts (approvalfriction_test.sh, scorer_test.sh) and the verify gate are bash."
+      },
+      {
+        "name": "git",
+        "reason": "The release `commit` action gate stages path-scoped changes and commits."
+      }
+    ],
+    "services": [
+      {
+        "name": "Node.js runtime",
+        "reason": "Executes the pure helper modules and headless test suite; no DB/queue/dev-server needed for this task."
+      }
+    ]
+  }
+}

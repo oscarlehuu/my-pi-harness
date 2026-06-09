@@ -84,6 +84,7 @@ import { decideReviewOutcome, parseReviewVerdict, type ReviewVerdict } from "./r
 import { evaluateDoneness, extractDonenessInputs, renderDoneChecklist } from "./done.ts";
 import { buildCommitMessage, decideShipCommit, resolveStagePaths } from "./ship.ts";
 import { detectLikelyStaleDocs, isForemanDocumentationPath, type DocumentationFile } from "./docdrift.ts";
+import { decideApprovalFriction, type ApprovalFrictionDecision } from "./approvalfriction.ts";
 import { repoEngagementActive, setRepoEngagement } from "./engagement.ts";
 
 // Stronger model the frontend track falls back to when Gemini fails to drive the tools.
@@ -1236,6 +1237,52 @@ function readLedgerLogEvents(cwd: string, slug: string): Array<Record<string, un
 	}
 }
 
+function readLatestDeveloperFilesChanged(cwd: string, slug: string): string[] {
+	for (const fname of [...listHandoffs(cwd, slug)].reverse()) {
+		try {
+			const handoff = JSON.parse(fs.readFileSync(path.join(taskDir(cwd, slug), "handoffs", fname), "utf-8")) as Partial<Handoff>;
+			if (handoff.role !== "developer") continue;
+			return Array.isArray(handoff.filesChanged) ? handoff.filesChanged.filter((file): file is string => typeof file === "string") : [];
+		} catch {
+			// Handoffs are controller-owned but best-effort for approval friction; skip corrupt files.
+		}
+	}
+	return [];
+}
+
+function approvalConfirmToken(slug: string): string {
+	return `SHIP ${slug}`;
+}
+
+function approvalFrictionForTask(cwd: string, slug: string): ApprovalFrictionDecision {
+	const draft = readPersistedPlannerDraft(cwd, slug);
+	return decideApprovalFriction({
+		highRiskPaths: loadHighRiskPaths(cwd),
+		changedPaths: [
+			...(draft?.plan.filesLikely ?? []),
+			...(draft?.plan.blastRadius ?? []),
+			...readLatestDeveloperFilesChanged(cwd, slug),
+		],
+	});
+}
+
+function formatShipApprovalInstructions(friction: ApprovalFrictionDecision, slug: string): string {
+	if (friction.level !== "elevated") {
+		return `Approve:  foreman({ resume: true, approve: true })\nRevise:   foreman({ resume: true, reject: "<what to change>" })`;
+	}
+	const matched = friction.matchedPaths.length ? friction.matchedPaths.map((file) => `\`${file}\``).join(", ") : "(matched high-risk path)";
+	const token = approvalConfirmToken(slug);
+	return (
+		`⚠ HIGH-RISK CHANGE — review the diff before approving: ${matched}\n` +
+		`Approve:  foreman({ resume: true, approve: true, confirm: "${token}" })\n` +
+		`Revise:   foreman({ resume: true, reject: "<what to change>" })`
+	);
+}
+
+function confirmMatchesElevatedShip(params: any, slug: string): boolean {
+	return typeof params?.confirm === "string" && params.confirm.trim() === approvalConfirmToken(slug);
+}
+
 async function runReleaseCommitGate(input: {
 	cwd: string;
 	slug: string;
@@ -1346,6 +1393,7 @@ const LoopParams = {
 		reject: { type: "string", description: "Reject the current gate with feedback; the task is halted for revision." },
 		engage: { type: "boolean", description: "Persist Foreman engagement for this repo. true routes impactful main-session edits through Foreman; false allows direct edits until re-engaged." },
 		answer: { type: "string", description: "Answer a crew member's escalated question (when the task is awaiting_decision) and resume the loop with it injected into the next round." },
+		confirm: { type: "string", description: "Deliberate Gate 2 confirmation token required only for elevated high-risk ships (for example: SHIP <slug>)." },
 	},
 	required: [],
 } as const;
@@ -1529,8 +1577,8 @@ export default function (pi: ExtensionAPI) {
 			"task pauses for the founder's approval of the plan before any code runs. The dev->test->fix",
 			"rounds then run (tester verdict success/partial/blocked/fail; on 'fail' the verdict is fed",
 			"back and retried until success or maxRounds). GATE 2 (ship): on success it pauses again for",
-			"the founder's approval before marking done. Approve a gate with { resume: true, approve: true }",
-			"or revise with { resume: true, reject: '<feedback>' }; resume targets THIS session's own task, so",
+			"the founder's approval before marking done. Approve a normal gate with { resume: true, approve: true }",
+			"(elevated high-risk ships require the displayed confirm token) or revise with { resume: true, reject: '<feedback>' }; resume targets THIS session's own task, so",
 			"only pass { slug } when a repo has multiple open tasks from different sessions. Drives the",
 			"developer + tester crew agents (the CTO can also use scout via the subagent tool for recon).",
 			"Persist route-through-Foreman engagement for the current repo with { engage: true|false }.",
@@ -1814,6 +1862,7 @@ export default function (pi: ExtensionAPI) {
 			if (state.state === "awaiting_ship") {
 				const docGate2Lines = latestDocGate2LinesFromEvents(readLedgerLogEvents(cwd, slug));
 				const docGate2Block = docGate2Lines ? `Documentation:\n${docGate2Lines}\n` : "";
+				const approvalFriction = approvalFrictionForTask(cwd, slug);
 				if (params.reject) {
 					state.state = "in_progress";
 					writeState(cwd, state);
@@ -1824,6 +1873,25 @@ export default function (pi: ExtensionAPI) {
 						`The work passed verification but the founder asked for changes:\n${params.reject}\n\nApply these.`;
 					// fall through into the round loop
 				} else if (params.approve) {
+					if (approvalFriction.level === "elevated" && !confirmMatchesElevatedShip(params, slug)) {
+						state.state = "awaiting_ship";
+						writeState(cwd, state);
+						appendLog(cwd, slug, {
+							type: "gate2_confirm_blocked",
+							level: approvalFriction.level,
+							matchedPaths: approvalFriction.matchedPaths,
+							reason: approvalFriction.reason,
+							confirmProvided: typeof params.confirm === "string" && params.confirm.trim().length > 0,
+						});
+						const pendingChecklist = renderDoneChecklist(evaluateCurrentDoneness(false));
+						emit(
+							`\n=== GATE 2 / SHIP — elevated confirmation required ===\n${docGate2Block}${pendingChecklist}\n\n` +
+								`This elevated ship was NOT marked done and no release action ran.\n` +
+								`${formatShipApprovalInstructions(approvalFriction, slug)}`,
+						);
+						return done();
+					}
+
 					const doneness = evaluateCurrentDoneness(true);
 					const doneChecklist = renderDoneChecklist(doneness);
 					if (!doneness.done) {
@@ -1858,8 +1926,7 @@ export default function (pi: ExtensionAPI) {
 						`\n=== GATE 2 / SHIP — approval needed ===\nTask "${state.task}" passed verification and is awaiting your sign-off.\n` +
 							docGate2Block +
 							`${doneChecklist}\n` +
-							`Approve:  foreman({ resume: true, approve: true })\n` +
-							`Revise:   foreman({ resume: true, reject: "<what to change>" })`,
+							`${formatShipApprovalInstructions(approvalFriction, slug)}`,
 					);
 					return done();
 				}
@@ -2382,12 +2449,14 @@ export default function (pi: ExtensionAPI) {
 					// ---- GATE 2: SHIP APPROVAL (verification passed; founder OKs before done) ----
 					state.state = "awaiting_ship";
 					writeState(cwd, state);
+					const approvalFriction = approvalFrictionForTask(cwd, slug);
 					appendLog(cwd, slug, {
 						type: "gate2_awaiting",
 						round,
 						preShipSummary: preShipSummaryLines.length ? preShipSummaryLines : undefined,
 						docEr: { status: docErReport.status, updatedPaths: docErReport.updatedPaths, reason: docErReport.reason, flagged: docErReport.flagged },
 						docDrift: docErReport.driftDocs,
+						approvalFriction,
 					});
 					const preShipSummary = preShipSummaryLines.length ? `Pre-ship checks:\n${preShipSummaryLines.join("\n")}\n` : "";
 					const docGate2Lines = formatDocGate2Lines(docErReport);
@@ -2400,8 +2469,7 @@ export default function (pi: ExtensionAPI) {
 							preShipSummary +
 							docGate2Block +
 							`${doneChecklist}\n` +
-							`Approve:  foreman({ resume: true, approve: true })\n` +
-							`Revise:   foreman({ resume: true, reject: "<what to change>" })`,
+							`${formatShipApprovalInstructions(approvalFriction, slug)}`,
 					);
 					return done();
 				}

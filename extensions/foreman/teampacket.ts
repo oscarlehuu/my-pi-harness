@@ -87,8 +87,9 @@ export function buildTeamPacket(scored: ScoredAssumption[] | undefined, opts: Te
 
 	selected.forEach(({ assumption }, index) => {
 		const text = punctuatedAssumption(cleanString(assumption.text));
+		const evidenceNote = assumption.unsubstantiated ? " [unsubstantiated — verify or downgrade]" : "";
 		lines.push(
-			`${index + 1}. Yes/no: I'm assuming ${text} Is that correct? _(confidence: ${confidenceLabel(assumption)}; risk: ${assumption.risk})_ Evidence/why risky: ${reasonLabel(assumption)}.`,
+			`${index + 1}. Yes/no: I'm assuming ${text}${evidenceNote} Is that correct? _(confidence: ${confidenceLabel(assumption)}; risk: ${assumption.risk})_ Evidence/why risky: ${reasonLabel(assumption)}.`,
 		);
 	});
 

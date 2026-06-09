@@ -20,7 +20,7 @@ assert.match(foremanIndex, /runCommandGates\(gates,\s*"pre-ship",\s*cwd,\s*signa
 assert.match(foremanIndex, /parseReviewVerdict\(reviewRun\.text\)/, "orchestrator parses reviewer output with the pure helper");
 assert.doesNotMatch(foremanIndex, /TODO\(Phase C\)/, "Phase C pre-ship hook is implemented");
 assert.match(reviewerPrompt, /^name: reviewer$/m, "reviewer crew name is declared");
-assert.match(reviewerPrompt, /^model: cliproxy\/claude-opus-4-8:xhigh$/m, "reviewer uses the required Opus xhigh model");
+assert.match(reviewerPrompt, /^model: cliproxy\/claude-opus-4-8:high$/m, "reviewer uses Opus high (not xhigh: xhigh repeatedly stalled in thinking spirals past the timeout budget)");
 assert.match(reviewerPrompt, /^tools: read, grep, find, ls, bash$/m, "reviewer tools are read-only");
 assert.match(reviewerPrompt, /REVIEW: APPROVE/, "reviewer prompt documents approve verdict");
 assert.match(reviewerPrompt, /REVIEW: REQUEST-CHANGES/, "reviewer prompt documents request-changes verdict");

@@ -130,37 +130,17 @@ export default function (pi: ExtensionAPI) {
 				invalidate() {},
 				render(width: number): string[] {
 					const lines: string[] = [];
+					const NARROW = 60;
 
-					// 1) Session name
-					const leftParts: string[] = [];
+					// LINE 1 (context/location group): [✎ session-name (accent)]  [⎇ branch (+warning git indicators)]  [cwd (dim)]
+					const line1Parts: string[] = [];
 					const name = ctx.sessionManager?.getSessionName?.();
 					if (name) {
-						leftParts.push(theme.fg("accent", `✎ ${name}`));
+						line1Parts.push(theme.fg("accent", `✎ ${name}`));
 					}
 
-					// 2) Context bar + %
-					let contextUsageStr: string | undefined;
-					const contextUsage = ctx.getContextUsage?.();
-					const contextWindow = contextUsage?.contextWindow;
-					
-					if (contextWindow) {
-						const percent = contextUsage?.percent;
-						if (percent === null || percent === undefined) {
-							contextUsageStr = "?";
-						} else {
-							const filledCount = Math.max(0, Math.min(12, Math.round((percent / 100) * 12)));
-							const bar = "▰".repeat(filledCount) + "▱".repeat(12 - filledCount);
-							const text = `${bar} ${Math.round(percent)}%`;
-							const color = percent > 90 ? "error" : percent > 70 ? "warning" : "success";
-							contextUsageStr = theme.fg(color, text);
-						}
-					}
-					if (contextUsageStr) {
-						leftParts.push(contextUsageStr);
-					}
-
-					// 3) Git branch (+ indicators)
 					const branch = footerData?.getGitBranch?.();
+					let branchText = "";
 					if (branch) {
 						const indicators: string[] = [];
 						if (git.unstaged > 0) {
@@ -178,23 +158,47 @@ export default function (pi: ExtensionAPI) {
 
 						const branchPart = theme.fg("dim", `⎇ ${branch}`);
 						if (indicators.length > 0) {
-							leftParts.push(branchPart + " " + theme.fg("warning", `(${indicators.join(", ")})`));
+							branchText = branchPart + " " + theme.fg("warning", `(${indicators.join(", ")})`);
 						} else {
-							leftParts.push(branchPart);
+							branchText = branchPart;
 						}
 					}
+					if (branchText) {
+						line1Parts.push(branchText);
+					}
 
-					// 4) Working Dir
 					const home = process.env.HOME || process.env.USERPROFILE || "";
 					let cwd = ctx.sessionManager?.getCwd?.() || ctx.cwd || "";
 					if (cwd) {
 						if (home && cwd.startsWith(home)) {
 							cwd = "~" + cwd.slice(home.length);
 						}
-						leftParts.push(theme.fg("dim", cwd));
+						if (width >= NARROW) {
+							line1Parts.push(theme.fg("dim", cwd));
+						}
 					}
 
-					// 5) Cost/tokens
+					const line1 = line1Parts.join("  ");
+					lines.push(truncateToWidth(line1, width));
+
+					// LINE 2 (stats group): [context bar+% (themed)]  [↑in ↓out (dim)]  [$cost (dim)]   ...right-aligned... [model (+ • thinking) (dim)]
+					let contextUsageStr: string | undefined;
+					const contextUsage = ctx.getContextUsage?.();
+					const contextWindow = contextUsage?.contextWindow;
+					
+					if (contextWindow) {
+						const percent = contextUsage?.percent;
+						if (percent === null || percent === undefined) {
+							contextUsageStr = "?";
+						} else {
+							const filledCount = Math.max(0, Math.min(12, Math.round((percent / 100) * 12)));
+							const bar = "▰".repeat(filledCount) + "▱".repeat(12 - filledCount);
+							const text = `${bar} ${Math.round(percent)}%`;
+							const color = percent > 90 ? "error" : percent > 70 ? "warning" : "success";
+							contextUsageStr = theme.fg(color, text);
+						}
+					}
+
 					let input = 0;
 					let output = 0;
 					let cost = 0;
@@ -211,11 +215,10 @@ export default function (pi: ExtensionAPI) {
 							}
 						}
 					}
-					leftParts.push(theme.fg("dim", `↑${fmt(input)} ↓${fmt(output)} $${cost.toFixed(3)}`));
-					
-					const left = leftParts.join("  ");
 
-					// Right side: Model ID + thinking level
+					const tokensPart = theme.fg("dim", `↑${fmt(input)} ↓${fmt(output)}`);
+					const costPart = theme.fg("dim", `$${cost.toFixed(3)}`);
+
 					const modelId = ctx.model?.id || "no-model";
 					let rightText = modelId;
 					if (ctx.model?.reasoning) {
@@ -223,11 +226,42 @@ export default function (pi: ExtensionAPI) {
 						rightText = lvl === "off" ? `${modelId} • thinking off` : `${modelId} • ${lvl}`;
 					}
 					const right = theme.fg("dim", rightText);
-					
+
+					let showCost = true;
+					let showTokens = true;
+
+					const getLeft = () => {
+						const parts: string[] = [];
+						if (contextUsageStr) {
+							parts.push(contextUsageStr);
+						}
+						if (showTokens) {
+							parts.push(tokensPart);
+						}
+						if (showCost) {
+							parts.push(costPart);
+						}
+						return parts.join("  ");
+					};
+
+					if (showCost) {
+						const left = getLeft();
+						if (visibleWidth(left) + 2 + visibleWidth(right) > width) {
+							showCost = false;
+						}
+					}
+					if (showTokens) {
+						const left = getLeft();
+						if (visibleWidth(left) + 2 + visibleWidth(right) > width) {
+							showTokens = false;
+						}
+					}
+
+					const left = getLeft();
 					const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
 					lines.push(truncateToWidth(left + pad + right, width));
 
-					// Line 2+ (CRITICAL no-regression): const m = footerData.getExtensionStatuses(); if (m.size > 0) sort [...m.entries()] by key alphabetically, map to the status text, join by " ", push truncateToWidth(line, width, theme.fg("dim","…")).
+					// Line 3+ (CRITICAL no-regression): const m = footerData.getExtensionStatuses(); if (m.size > 0) sort [...m.entries()] by key alphabetically, map to the status text, join by " ", push truncateToWidth(line, width, theme.fg("dim","…")).
 					const extensionStatuses = footerData?.getExtensionStatuses?.();
 					if (extensionStatuses && extensionStatuses.size > 0) {
 						const sortedStatuses = Array.from(extensionStatuses.entries())

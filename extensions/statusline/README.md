@@ -4,15 +4,16 @@ A new self-contained pi extension that replaces the default pi footer via `ctx.u
 
 ## Overview
 What it renders:
-- **Line 1 (Left):**
+- **Line 1 (Identity/Location):**
   - **Session Name:** Current session name with a pencil icon (`✎ session-name`), rendered in accent color (only when set).
-  - **Context usage bar:** A themed 12-cell bar (`▰` / `▱`) with the current context usage percentage (colored green/warning/error based on usage thresholds, or `?` when unknown).
   - **Git Branch:** Current git branch prefixed with `⎇` (muted), appended with status indicators `(unstaged, staged, ahead↑, behind↓)` in warning color when changes are detected.
-  - **Working Directory:** The session current working directory, relative to home (e.g. `~/path/to/project`), muted.
-  - **Session Cost & Tokens:** Cumulative input tokens, output tokens (k-formatted), and USD cost (muted).
-- **Line 1 (Right):**
-  - **Model ID & Thinking Level:** The active model ID with its thinking level (`model-id • thinking-level` or `model-id • thinking off` if reasoning is supported but disabled, else just `model-id`), muted.
-- **Line 2+:**
+  - **Working Directory:** The session current working directory, relative to home (e.g. `~/path/to/project`), muted. Dropped first if the width is less than NARROW (60).
+- **Line 2 (Stats Group):**
+  - **Context usage bar:** A themed 12-cell bar (`▰` / `▱`) with the current context usage percentage (colored green/warning/error based on usage thresholds, or `?` when unknown).
+  - **Session Tokens:** Cumulative input tokens, output tokens (k-formatted), muted. Dropped if the line does not fit.
+  - **Session Cost:** USD cost (muted). Derived from config/models.json pricing. The cost is an estimated API-equivalent cost (as real cliproxy subscription cost is flat). Dropped first if the line does not fit.
+  - **Model ID & Thinking Level (Right-aligned):** The active model ID with its thinking level (`model-id • thinking-level` or `model-id • thinking off` if reasoning is supported but disabled, else just `model-id`), muted. Never dropped.
+- **Line 3+:**
   - **Preserved Extension Statuses:** The extension statuses set via `ctx.ui.setStatus()`, sorted alphabetically by key and sanitized.
 
 ## Caveat: Replaces the Entire Footer

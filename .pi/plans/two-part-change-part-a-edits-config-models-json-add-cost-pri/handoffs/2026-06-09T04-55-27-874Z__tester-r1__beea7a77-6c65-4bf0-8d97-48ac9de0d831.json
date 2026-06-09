@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-06-09T04:55:27.874Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "beea7a77-6c65-4bf0-8d97-48ac9de0d831",
+  "successState": "success",
+  "summary": "[reviewer] review: approve",
+  "raw": "Let me see the full index.ts and verify the cost-summing block and helpers.\nBoth parts verified. Let me confirm the responsive logic and that nothing else regressed.\n\nThe implementation is correct:\n\n**Part A** (`config/models.json:15,25`): Both `cost` objects added with exact pricing, correct key order, 2-space indent, valid JSON (parsed OK).\n\n**Part B** (`index.ts`):\n- Line 1 = session • branch • cwd, with cwd dropped when `width < NARROW` (60) at index.ts:172-174.\n- Line 2 = context bar • tokens • cost • right-aligned model, with drop order cost→tokens via `getLeft()`/`showCost`/`showTokens` (index.ts:235-261), context bar and model never dropped.\n- Cost still sums `m.usage.cost.total` only (index.ts:212) — no pricing recompute, correct single-source.\n- Both lines end with `truncateToWidth` safety net (index.ts:177, 263).\n- Helpers (`sanitizeStatusText`, `fmt`), FOREMAN SEAM comment, git poll (2.5s, refreshing guard, dispose clears interval+unsub), and ext-statuses block all preserved/unchanged.\n- All values optional-chained; no spawn in render.\n\n**README** updated for the 3-line layout, drop order, and the estimated-cost note.\n\nDrop-order logic matches spec exactly: check with cost → drop cost; then check → drop tokens; recomputed via `getLeft()` each time. Comment markers updated to \"Line 3+\".\n\nNo scope creep (log.jsonl changes are harness artifacts). No security or boundary issues. JSON validated.\n\nREVIEW: APPROVE"
+}

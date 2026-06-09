@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-09T04:54:46.880Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "c1ed457b-7234-4a0a-ae90-2daff7e3259e",
+  "successState": "success",
+  "summary": "I'll examine the changed files to verify the task was actually completed.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/docer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman doc-er/drift helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll examine the changed files to verify the task was actually completed.\nLet me check the statusline verify still passes.\nLet me run the actual statusline module-eval verify to confirm STATUSLINE OK.\nAll requirements verified. Let me confirm tab indentation in index.ts.\nEverything checks out. Let me verify the key requirements against the task:\n\n**Part A** — `config/models.json`:\n- ✅ Both models have `cost` with exact pricing: opus `{5, 25, 0.5, 6.25}`, gemini `{1.5, 9, 0.15, 0}`\n- ✅ 2-space indent preserved, `cost` added last (other keys/order unchanged), valid JSON\n\n**Part B** — `index.ts`:\n- ✅ Line 1 = session-name (accent) + branch (+warning indicators) + cwd (dim); cwd dropped when `width < NARROW (60)`\n- ✅ Line 2 = context bar + tokens + cost (left) ... right-aligned model+thinking; uses the `pad` pattern + `truncateToWidth`\n- ✅ Responsive drop order on Line 2: cost first, then tokens, never context bar or model; uses `visibleWidth(left)+2+visibleWidth(right)>width`\n- ✅ Line 3+ ext-statuses block unchanged\n- ✅ Cost sums `m.usage.cost.total` (no pricing recompute); tokens unchanged\n- ✅ Helpers, FOREMAN SEAM comment, git poll (execFile, 2.5s, refreshing guard, dispose clears interval+unsub) preserved\n- ✅ Defensive optional-chaining, no spawn in render, no new deps (tabs)\n\n**Docs** — README updated with 2-line layout, drop order, estimated API-equivalent cost note; Performance + Foreman sections kept.\n\n**Verify** — module-eval prints `STATUSLINE OK`; models.json validated as JSON.\n\nNo cheats, hardcoding, or test edits. The implementation faithfully fulfills the task intent.\n\nVERDICT: PASS"
+}

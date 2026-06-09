@@ -16,7 +16,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, keyHint, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { classifyToolCall } from "./guard.ts";
 import {
 	type Handoff,
@@ -64,6 +65,7 @@ import {
 	formatIntentContract,
 	buildTeamQuestionPacketForPlan,
 	renderFounderPlan,
+	scorePlanAssumptions,
 	serializePlannerPlan,
 	shouldReusePersistedDraft,
 	summarizeRequirementChecks,
@@ -85,6 +87,8 @@ import { evaluateDoneness, extractDonenessInputs, renderDoneChecklist } from "./
 import { buildCommitMessage, decideShipCommit, resolveStagePaths } from "./ship.ts";
 import { detectLikelyStaleDocs, isForemanDocumentationPath, type DocumentationFile } from "./docdrift.ts";
 import { decideApprovalFriction, type ApprovalFrictionDecision } from "./approvalfriction.ts";
+import { formatCalibrationReport, proposeCalibration, summarizeCalibration } from "./calibration.ts";
+import { readCalibrationObservationsFromPlans } from "./calibration-reader.ts";
 import { repoEngagementActive, setRepoEngagement } from "./engagement.ts";
 
 // Stronger model the frontend track falls back to when Gemini fails to drive the tools.
@@ -1539,6 +1543,20 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerCommand("foreman-calibration", {
+		description: "Print an advisory scorer calibration report for this repo (read-only; no auto-tuning).",
+		handler: async (_args, ctx) => {
+			const cwd = ctx.cwd;
+			restoreFromMirror(cwd);
+			const observations = readCalibrationObservationsFromPlans(cwd);
+			const stats = summarizeCalibration(observations);
+			const proposalLines = proposeCalibration(stats);
+			const report = formatCalibrationReport(stats, proposalLines);
+			console.log(report);
+			ctx.ui?.notify?.(report, proposalLines.length ? "warning" : "info");
+		},
+	});
+
 	pi.registerShortcut("ctrl+b", {
 		description: "Foreman dashboard",
 		handler: async (ctx) => {
@@ -1753,7 +1771,7 @@ export default function (pi: ExtensionAPI) {
 					writePersistedPlannerDraft(cwd, slug, drafted);
 					const requirementChecks = evaluateRequirementPresence({ requirements: drafted.plan.requirements, env: process.env, toolPresent: toolOnPath });
 					const highRiskPaths = loadHighRiskPaths(cwd);
-					const plan = renderFounderPlan(drafted.plan, {
+					const plannerContext = {
 						task: state.task,
 						cwd,
 						track,
@@ -1767,24 +1785,15 @@ export default function (pi: ExtensionAPI) {
 						plannerSource: drafted.source,
 						manifestWriteEligible: drafted.source === "planner",
 						requirementChecks,
-						highRiskPaths: highRiskPaths,
-					});
-					const teamQuestionPacket = buildTeamQuestionPacketForPlan(drafted.plan, {
-						task: state.task,
-						cwd,
-						track,
-						maxRounds: state.maxRounds,
-						verifyCommand,
-						developerLabel: track === "frontend" ? "UI developer" : "Developer",
-						developerModel: developer.model,
-						testerModel: tester.model,
-						manifestExists,
-						existingGates: gates,
-						plannerSource: drafted.source,
-						manifestWriteEligible: drafted.source === "planner",
-						requirementChecks,
-						highRiskPaths: highRiskPaths,
-					});
+						highRiskPaths,
+					};
+					const plan = renderFounderPlan(drafted.plan, plannerContext);
+					const teamQuestionPacket = buildTeamQuestionPacketForPlan(drafted.plan, plannerContext);
+					const scoredAssumptionsForLog = scorePlanAssumptions(drafted.plan, plannerContext).map((assumption) => ({
+						text: assumption.text,
+						route: assumption.route,
+						risk: assumption.risk,
+					}));
 					fs.writeFileSync(path.join(taskDir(cwd, slug), "plan.md"), `${plan}\n`);
 					state.state = "planning";
 					writeState(cwd, state);
@@ -1794,6 +1803,7 @@ export default function (pi: ExtensionAPI) {
 						note: drafted.note,
 						perRoundGates: perRoundGateSummary,
 						requirementGaps: requirementGapNames(requirementChecks),
+						scoredAssumptions: scoredAssumptionsForLog,
 						teamQuestionPacket: teamQuestionPacket || undefined,
 					});
 					emit(
@@ -2501,6 +2511,53 @@ export default function (pi: ExtensionAPI) {
 			appendLog(cwd, slug, { type: "rounds_exhausted", round: state.maxRounds });
 			emit(`STOPPED after ${state.maxRounds} rounds without success. Escalating to founder.`);
 			return done();
+		},
+
+		// DISPLAY ONLY: collapse the Foreman transcript to a one-line stage summary by default,
+		// expandable via app.tools.expand (Ctrl+O). Does NOT touch execute()/done() return — the
+		// controller/LLM still consumes the full text content unchanged.
+		renderResult(result: any, view: any, theme: any, _ctx: any) {
+			try {
+				const expanded = !!view?.expanded;
+				const isPartial = !!view?.isPartial;
+				if (isPartial) {
+					return new Text(theme.fg("warning", "▾ Foreman running…"), 0, 0);
+				}
+
+				const content = result?.content?.[0];
+				const full = content?.type === "text" && typeof content?.text === "string" ? content.text : "";
+				const lines = full.split("\n");
+
+				// Derive a stage summary (first match wins).
+				let summary: string;
+				if (full.includes("GATE 1 / PLAN")) {
+					summary = "GATE 1 · plan ready — approve or revise";
+				} else if (full.includes("GATE 2 / SHIP")) {
+					summary = "GATE 2 · ready to ship — approve or revise";
+				} else if (full.includes("SHIPPED")) {
+					summary = "✓ shipped";
+				} else if (full.includes("Task halted")) {
+					summary = "■ halted";
+				} else if (full.includes("awaiting_decision") || full.includes("escalat")) {
+					summary = "? awaiting your decision";
+				} else {
+					const firstLine = lines.find((l: string) => l.trim().length > 0) ?? "";
+					summary = firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine;
+				}
+
+				if (expanded) {
+					const header = `${theme.fg("accent", "▾")} ${theme.fg("toolTitle", "Foreman")}`;
+					return new Text(`${header}\n${full}`, 0, 0);
+				}
+
+				const text =
+					`${theme.fg("accent", "▸")} ${theme.fg("toolTitle", "Foreman")} ` +
+					`${theme.fg("muted", "· " + summary)} ` +
+					`${theme.fg("dim", "(" + keyHint("app.tools.expand", "expand") + ")")}`;
+				return new Text(text, 0, 0);
+			} catch (e) {
+				return new Text(theme.fg("error", "Foreman"), 0, 0);
+			}
 		},
 	});
 }

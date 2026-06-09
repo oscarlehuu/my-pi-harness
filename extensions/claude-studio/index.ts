@@ -40,6 +40,13 @@ export default function (pi: ExtensionAPI) {
 		} catch {
 			// best-effort
 		}
+		try {
+			if (typeof pi.ui?.setWorkingMessage === "function") {
+				pi.ui.setWorkingMessage("cooking");
+			}
+		} catch {
+			// best-effort
+		}
 	});
 
 	// NOTE: Overriding user/assistant message rendering would go here using registerMessageRenderer if desired,

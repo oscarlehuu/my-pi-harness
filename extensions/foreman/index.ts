@@ -53,8 +53,7 @@ import {
 	runCommandGates,
 } from "./gates.ts";
 import {
-	type PlannerPlan,
-	type PlannerSource,
+	type PersistedPlannerDraft,
 	type RequirementCheck,
 	PLAN_JSON_END,
 	PLAN_JSON_START,
@@ -64,6 +63,7 @@ import {
 	formatIntentContract,
 	renderFounderPlan,
 	serializePlannerPlan,
+	shouldReusePersistedDraft,
 	summarizeRequirementChecks,
 	validatePlannerPlan,
 } from "./planner.ts";
@@ -932,12 +932,6 @@ function plannerPlanMetaPath(cwd: string, slug: string): string {
 	return path.join(taskDir(cwd, slug), "plan.meta.json");
 }
 
-interface PersistedPlannerDraft {
-	source: Extract<PlannerSource, "planner" | "fallback">;
-	plan: PlannerPlan;
-	note?: string;
-}
-
 function isPersistedPlannerSource(value: unknown): value is PersistedPlannerDraft["source"] {
 	return value === "planner" || value === "fallback";
 }
@@ -1690,7 +1684,7 @@ export default function (pi: ExtensionAPI) {
 				} else {
 					const persisted = readPersistedPlannerDraft(cwd, slug);
 					const manifestExists = hasForemanManifest(cwd);
-					const drafted = persisted
+					const drafted = shouldReusePersistedDraft(persisted)
 						? persisted
 						: await draftPlannerPlan({
 								cwd,

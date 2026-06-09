@@ -1,0 +1,73 @@
+{
+  "summary": "Fix the stale-fallback planner reuse footgun: at the Gate-1 planning branch (index.ts:1691-1694) any persisted draft short-circuits draftPlannerPlan, so a persisted source:'fallback' draft permanently blocks a real planner re-run. Add a pure shouldReusePersistedDraft(draft) predicate in planner.ts that only reuses source:'planner' drafts; wire it into the single planning-branch decision so fallback drafts trigger a fresh draftPlannerPlan while real planner drafts are still reused and brand-new tasks still draft once. The re-run result is persisted as today. Extend planner_test.sh to unit-test the predicate and grep-assert index.ts uses it; doc the rule in INTERNALS.md.",
+  "assumptions": [],
+  "nonGoals": [],
+  "alternatives": [],
+  "blastRadius": [],
+  "steps": [
+    "Confirm PersistedPlannerDraft.source semantics: index.ts:934 type (Extract<PlannerSource,'planner'|'fallback'>) and readPersistedPlannerDraft default-to-'fallback' at index.ts:967; PlannerSource exported at planner.ts:31.",
+    "Add pure, node-builtin-only shouldReusePersistedDraft(draft: { source?: PlannerSource } | null | undefined): boolean to planner.ts returning draft?.source === 'planner' (structural shape avoids importing the index.ts type; keeps planner.ts import-pure).",
+    "Import shouldReusePersistedDraft from ./planner.ts in index.ts (existing planner import block at index.ts:64-69).",
+    "Rewrite only the planning-branch reuse decision (index.ts:1691-1694): reuse persisted only when shouldReusePersistedDraft(persisted) is true; otherwise (no draft, or source==='fallback') await draftPlannerPlan(...). Leave writePersistedPlannerDraft (index.ts:1709) and renderFounderPlan wiring unchanged.",
+    "Do NOT touch the Gate-1 approve branch (index.ts:1672-1675) or any post-approval/intent logic (index.ts:1748-1749).",
+    "Extend extensions/foreman/test/planner_test.sh: assert shouldReusePersistedDraft({source:'planner'})===true, ({source:'fallback'})===false, and null/undefined/missing-source===false; add a grep-assert that index.ts references shouldReusePersistedDraft at the planning branch.",
+    "Doc-er: update extensions/foreman/docs/INTERNALS.md Gate-1 flow (around INTERNALS.md:44) to state only source:'planner' drafts are reused and a persisted fallback re-runs draftPlannerPlan.",
+    "Run the per-round verify gate (full headless suite) and keep everything green."
+  ],
+  "filesLikely": [
+    "extensions/foreman/planner.ts",
+    "extensions/foreman/index.ts",
+    "extensions/foreman/test/planner_test.sh",
+    "extensions/foreman/docs/INTERNALS.md"
+  ],
+  "risks": [
+    "Task says PersistedPlannerDraft 'in planner.ts' but the interface actually lives in index.ts:934 (only PlannerSource is in planner.ts); the predicate will accept a structural { source?: PlannerSource } shape to keep planner.ts pure and avoid importing the index type.",
+    "readPersistedPlannerDraft coerces unknown/legacy-wrapped source to 'fallback' (index.ts:967), so legacy drafts now correctly trigger a re-draft instead of being reused — intended by the fix but a behavior change for pre-source drafts; note in tests.",
+    "Must keep the reuse decision a single site; accidental change to the approve branch or intent-load (readPersistedPlannerDraft at index.ts:1672/1748) would regress Gate-1 — scope strictly to index.ts:1691-1694.",
+    "No infinite loop: re-draft fires once per planning-branch entry (resume/new invocation), which ends by emitting the approval prompt and returning; verified the branch is not inside the round loop.",
+    "If draftPlannerPlan itself depends on host/pi APIs it cannot move to planner.ts — only the boolean predicate is extracted, so planner.ts purity is preserved.",
+    "planner.ts is import-pure (header at planner.ts:4); the new predicate adds no fs/pi imports."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/docer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [
+      {
+        "name": "node",
+        "reason": "headless tests run via `node --input-type=module` and import .ts modules directly (native TS type-stripping)"
+      },
+      {
+        "name": "bash",
+        "reason": "verify gate and all *_test.sh runners are bash scripts"
+      },
+      {
+        "name": "grep",
+        "reason": "verify gate begins with a grep assertion on planner.md and tests grep index.ts source"
+      },
+      {
+        "name": "git",
+        "reason": "release-stage commit action gate operates on the repo"
+      }
+    ],
+    "services": []
+  }
+}

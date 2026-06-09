@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-09T03:54:29.024Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "e36d2ac5-b656-4578-9c58-6ddf8f789ae8",
+  "successState": "success",
+  "summary": "I'll investigate the actual changes to verify they fulfill the task intent.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/docer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman doc-er/drift helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll investigate the actual changes to verify they fulfill the task intent.\nThe relevant changes are uncommitted. Let me examine the actual diffs for planner.ts, index.ts, INTERNALS.md, and the test.\nThe change looks faithful. Let me confirm the freshly re-run draft is still persisted (per task requirement) by reading the surrounding index.ts context.\nAll requirements verified:\n\n- **Reuse predicate** `shouldReusePersistedDraft()` extracted into pure `planner.ts:69-73`, returns true only for `source === \"planner\"` (planner.ts:72).\n- **index.ts planning branch** (index.ts:1688) now uses `shouldReusePersistedDraft(persisted)` instead of the old `persisted ? persisted :` short-circuit; fallback drafts now re-run `draftPlannerPlan`.\n- **Re-run draft still persisted** via `writePersistedPlannerDraft(cwd, slug, drafted)` (index.ts:1703) regardless of source.\n- **Normal/new-task cases preserved**: real planner draft reused, no persisted draft → drafts once.\n- **Tests added** in planner_test.sh asserting planner→reuse, fallback→re-draft, null/legacy→false, plus grep-asserts that index.ts uses the predicate and dropped the old unconditional reuse.\n- **INTERNALS.md** updated in the planner/Gate-1 flow section to note only `source:\"planner\"` drafts are reused.\n- `planner.ts` stays pure (node-builtin only), `PersistedPlannerDraft` type relocated there cleanly. Full headless suite green (exit 0). No tests weakened or behavior cheated.\n\nVERDICT: PASS"
+}

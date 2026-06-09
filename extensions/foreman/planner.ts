@@ -61,6 +61,18 @@ export interface PlannerPlan {
 	requirements: TaskRequirements;
 }
 
+export interface PersistedPlannerDraft {
+	source: Extract<PlannerSource, "planner" | "fallback">;
+	plan: PlannerPlan;
+	note?: string;
+}
+
+export function shouldReusePersistedDraft(draft: PersistedPlannerDraft | null | undefined): draft is PersistedPlannerDraft & { source: "planner" };
+export function shouldReusePersistedDraft(draft: { source?: unknown } | null | undefined): boolean;
+export function shouldReusePersistedDraft(draft: { source?: unknown } | null | undefined): boolean {
+	return draft?.source === "planner";
+}
+
 export interface PlannerContext {
 	task: string;
 	cwd: string;

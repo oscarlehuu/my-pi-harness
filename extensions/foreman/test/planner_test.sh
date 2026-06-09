@@ -32,6 +32,20 @@ assert.match(
   "orchestrator parses planner output with the shared extractJsonBlock helper",
 );
 assert.doesNotMatch(foremanIndex, /parsePlannerPlanJson\(run\.text\)/, "orchestrator does not parse planner output via the planner helper");
+assert.equal(planner.shouldReusePersistedDraft({ source: "planner" }), true, "persisted real planner drafts are reusable");
+assert.equal(planner.shouldReusePersistedDraft({ source: "fallback" }), false, "persisted fallback drafts are not reusable");
+assert.equal(planner.shouldReusePersistedDraft({ source: "persisted" }), false, "legacy/persisted source metadata is not treated as a real planner draft");
+assert.equal(planner.shouldReusePersistedDraft(null), false, "missing persisted draft is not reusable");
+assert.match(
+  foremanIndex,
+  /const drafted = shouldReusePersistedDraft\(persisted\)\s*\?\s*persisted\s*:\s*await draftPlannerPlan\(/,
+  "planning branch reuses persisted drafts only through shouldReusePersistedDraft",
+);
+assert.doesNotMatch(
+  foremanIndex,
+  /const drafted = persisted\s*\?\s*persisted\s*:/,
+  "planning branch no longer reuses every persisted draft unconditionally",
+);
 
 // Regression: extractJsonBlock must pick the block that actually parses, not the first marker.
 // A planner reasoning ABOUT the PLAN-JSON contract emits the markers in prose before the real block;

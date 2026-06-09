@@ -3,7 +3,7 @@
     "cliproxy": {
       "baseUrl": "http://localhost:8317/v1",
       "api": "openai-completions",
-      "apiKey": "pi-local-7c3f9a2e8b1d4f6a0c2e5b8d",
+      "apiKey": "${API_KEY}",
       "models": [
         {
           "id": "claude-opus-4-8",

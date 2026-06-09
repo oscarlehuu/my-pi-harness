@@ -59,7 +59,7 @@ assert.equal(drift.isForemanDocumentationPath("extensions/foreman/docs/INTERNALS
 assert.equal(drift.isForemanDocumentationPath("extensions/foreman/index.ts"), false, "code path is not documentation");
 
 assert.match(docErPrompt, /^name: doc-er$/m, "doc-er crew name is declared");
-assert.match(docErPrompt, /^model: cliproxy\/gemini-3.5-flash-low:high$/m, "doc-er uses Gemini 3.5 Flash high (cheap; soft stage with drift-detector safety net, not a decision-making judge)");
+assert.match(docErPrompt, /^model: cliproxy\/claude-opus-4-8:medium$/m, "doc-er uses Opus medium: reliable tool-calling (Gemini flaked the doc-er tool loop) but a lighter thinking budget than the high judges, since writing docs needs reliability not deep reasoning");
 assert.match(docErPrompt, /^tools: read, grep, find, ls, bash, edit, write$/m, "doc-er has docs-editing tools but no foreman/AskUserQuestion");
 assert.match(docErPrompt, /Write ONLY under `docs\/` and `extensions\/\*\/docs\/`/, "doc-er prompt enforces docs-only writes");
 assert.match(docErPrompt, /NEVER touch `AGENTS\.md`/, "doc-er prompt forbids AGENTS.md");

@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-09T04:09:28.413Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "f86c16c8-f70b-42eb-9801-c788f92d62af",
+  "successState": "success",
+  "summary": "Let me verify the module-eval and check the reference pattern.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/docer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman doc-er/drift helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "Let me verify the module-eval and check the reference pattern.\nThe implementation matches the reference well. Let me verify the module-eval works by loading through jiti with pi's alias map.\nNeed to run from PI dir context for module resolution. Let me place the script inside PI dir.\nModule-eval passes (\"STATUSLINE OK\"). The implementation faithfully matches the spec:\n\n- `package.json` mirrors session-namer with `pi.extensions: [\"index.ts\"]` ✓\n- `index.ts`: default export, `session_start` → `setFooter`; context bar (12-cell, error/warning/success colors, `?` fallback, omit when no contextWindow), git branch with `⎇` + `onBranchChange` returned as `dispose`, cost/tokens loop with correct `fmt`, line-1 left/right layout with `pad`+`truncateToWidth`, and the critical preserved extension-statuses line (sorted alphabetically) ✓\n- Correct bare imports of the three `@earendil-works` packages; `invalidate()` no-op; everything computed fresh per render ✓\n- FOREMAN INTEGRATION SEAM comment block present; README covers rendering, the \"setFooter replaces whole footer\" caveat, the preserved seam, and the Foreman-via-`setStatus` future section with the rejected hard-dependency alternative ✓\n- `install.sh` untouched; self-contained, no cross-extension imports ✓\n\nThe only deviation is an extra `sanitizeStatusText` helper applied to status text — a harmless defensive enhancement, not a regression or cheat. No hardcoding or test tampering.\n\nVERDICT: PASS"
+}

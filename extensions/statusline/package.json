@@ -1,0 +1,10 @@
+{
+  "name": "statusline",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Replaces the default pi footer with a custom, high-density statusline showing context usage, git branch, and cumulative session stats.",
+  "pi": {
+    "extensions": ["index.ts"]
+  }
+}

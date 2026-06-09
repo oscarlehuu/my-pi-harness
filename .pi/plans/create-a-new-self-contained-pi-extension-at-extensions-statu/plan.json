@@ -1,0 +1,56 @@
+{
+  "summary": "Create a self-contained pi extension at extensions/statusline/ (package.json, index.ts, README.md) that calls ctx.ui.setFooter() on session_start to render a custom footer: a colored 12-cell context-usage bar, git branch, and cumulative cost/tokens on line 1 (model right-aligned), and—critically—re-renders the extension-statuses line (sorted by key, joined by space) so foreman/continual-learning setStatus output is preserved. jiti-loaded TS, no build step, auto-installed by install.sh's extensions/*/ glob (no install.sh edit). Acceptance is a module-eval that loads index.ts via pi's bundled jiti alias map and asserts default export is a function (prints STATUSLINE OK).",
+  "assumptions": [],
+  "nonGoals": [],
+  "alternatives": [],
+  "blastRadius": [],
+  "steps": [
+    "Add extensions/statusline/package.json mirroring extensions/session-namer/package.json: { name: statusline, version 1.0.0, private, type module, description, pi.extensions: [index.ts] }.",
+    "Write extensions/statusline/index.ts: default export function(pi: ExtensionAPI) that on pi.on('session_start', (_event, ctx) => ctx.ui.setFooter((tui, theme, footerData) => ({ render, invalidate, dispose }))). Imports: type ExtensionAPI from @earendil-works/pi-coding-agent; value { truncateToWidth, visibleWidth } from @earendil-works/pi-tui; type AssistantMessage from @earendil-works/pi-ai. Use tabs.",
+    "render(width): build line 1 left group from present-only sections joined by two spaces: (a) context bar from ctx.getContextUsage() — 12-cell '▰'*filled+'▱'*rest+' NN%', color via theme.fg success/warning/error by percent>70/>90, '?' with no bar color when percent==null, omit section when contextWindow falsy or getContextUsage() undefined; (b) '⎇ <branch>' from footerData.getGitBranch() when truthy; (c) '↑in ↓out $cost' summed over ctx.sessionManager.getBranch() assistant messages (fmt k-suffix, cost.toFixed(3)), defensive on missing usage fields. Wrap muted parts in theme.fg('dim',...). right = theme.fg('dim', ctx.model?.id || 'no-model'); pad = ' '.repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right))); push truncateToWidth(left+pad+right, width).",
+    "render line 2+ (no-regression): const m = footerData.getExtensionStatuses(); if (m.size>0) push truncateToWidth([...m.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,t])=>t).join(' '), width, theme.fg('dim','…')). invalidate(){} no-op; compute everything fresh each render (no cached themed strings). dispose = footerData.onBranchChange(()=>tui.requestRender()).",
+    "Add a top-of-file comment block documenting the FOREMAN INTEGRATION SEAM (foreman surfaces stage+agents-alive via ctx.ui.setStatus('foreman', text), appearing automatically through the preserved extension-statuses line; no cross-extension import).",
+    "Write extensions/statusline/README.md: what it renders; the 'setFooter replaces the whole footer' caveat; the preserved extension-statuses seam; and a 'Foreman integration (future)' section explaining the setStatus seam and why a dedicated inline section reading foreman state is rejected (hard cross-extension dependency violates compose-through-substrate).",
+    "Verify: run the module-eval that loads ./extensions/statusline/index.ts through pi's bundled jiti with the loader's alias map and asserts default is a function, expecting STATUSLINE OK (alias harness already proven green against the reference custom-footer.ts).",
+    "Sanity: confirm no new deps added and no other extension is imported; rely on install.sh's existing extensions/*/ glob (do not edit install.sh)."
+  ],
+  "filesLikely": [
+    "extensions/statusline/package.json (new)",
+    "extensions/statusline/index.ts (new)",
+    "extensions/statusline/README.md (new)"
+  ],
+  "risks": [
+    "setFooter REPLACES the entire default footer; failing to re-render the extension-statuses line would silently drop foreman/continual-learning setStatus output (regression). Mitigation: replicate footer.js:204-212 (sort by localeCompare, join ' ', truncateToWidth with dim ellipsis).",
+    "Default footer applies sanitizeStatusText to each status before joining; the spec maps raw status text + join ' ' (no sanitize), a minor fidelity gap vs default rendering — intentional per task spec.",
+    "Theme switching: if themed strings were cached, color wouldn't update; spec requires computing fresh per render with invalidate() no-op — must be followed.",
+    "Defensive access required: ctx.getContextUsage() may return undefined and AssistantMessage.usage subfields may be missing; omit/zero-default rather than throw inside render.",
+    "Module-eval verify depends on pi being installed and resolvable via `command -v pi` (PKG derived from readlink); jiti is bundled under pi's node_modules (confirmed). Alias map must match pi's loader (confirmed loader.js:36-39/76-79) and was proven to resolve value imports against the reference example.",
+    "The foreman `verify` gate runs the foreman test suite, not statusline; the statusline acceptance is the module-eval STATUSLINE OK command, kept out of proposedGates to avoid overwriting the shared .pi/foreman.json (per instructions).",
+    "Assumption: pi fires session_start with (event, ctx) where ctx.ui.setFooter is available in interactive mode (matches example + types.d.ts:809); in non-interactive/print mode setFooter is a no-op, which is acceptable."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/docer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [],
+    "services": []
+  }
+}

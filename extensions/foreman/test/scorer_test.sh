@@ -241,7 +241,8 @@ const indexSource = fs.readFileSync(`${process.env.ROOT_DIR}/extensions/foreman/
 const repoForemanManifest = fs.readFileSync(`${process.env.ROOT_DIR}/.pi/foreman.json`, "utf-8");
 assert.match(plannerSource, /scoreAssumptions\(plan\.assumptions/, "renderFounderPlan scorer path calls scoreAssumptions");
 assert.match(indexSource, /loadHighRiskPaths\(cwd\)/, "Gate 1 passes manifest highRiskPaths into the planner render");
-assert.match(indexSource, /renderFounderPlan\(drafted\.plan,[\s\S]*highRiskPaths:/, "Gate 1 render receives the scorer highRiskPaths context");
+assert.match(indexSource, /const plannerContext = \{[\s\S]*highRiskPaths,[\s\S]*\};/, "Gate 1 builds a planner context with scorer highRiskPaths");
+assert.match(indexSource, /renderFounderPlan\(drafted\.plan, plannerContext\)/, "Gate 1 render receives the shared scorer context");
 assert.match(repoForemanManifest, /extensions\/foreman\/test\/scorer_test\.sh/, ".pi/foreman.json verify gate runs scorer_test.sh");
 
 console.log("Foreman assumption scorer tests passed");

@@ -108,7 +108,8 @@ const teampacketSource = fs.readFileSync(`${process.env.ROOT_DIR}/extensions/for
 const repoForemanManifest = fs.readFileSync(`${process.env.ROOT_DIR}/.pi/foreman.json`, "utf-8");
 assert.match(plannerSource, /import \{ buildTeamPacket \} from "\.\/teampacket\.ts"/, "planner render path imports the pure team-packet formatter");
 assert.match(plannerSource, /renderFounderPlan[\s\S]*buildTeamPacket\(scoredAssumptions\)/, "Gate-1 founder plan render path calls buildTeamPacket");
-assert.match(indexSource, /buildTeamQuestionPacketForPlan\(drafted\.plan,[\s\S]*highRiskPaths: highRiskPaths/, "Gate 1 computes the same packet for the ledger event using the scorer context");
+assert.match(indexSource, /const plannerContext = \{[\s\S]*highRiskPaths,[\s\S]*\};/, "Gate 1 builds a shared planner context with scorer highRiskPaths");
+assert.match(indexSource, /buildTeamQuestionPacketForPlan\(drafted\.plan, plannerContext\)/, "Gate 1 computes the same packet for the ledger event using the scorer context");
 assert.match(indexSource, /teamQuestionPacket: teamQuestionPacket \|\| undefined/, "Gate 1 awaiting ledger event records the packet text when present");
 assert.match(teampacketSource, /import type \{ ScoredAssumption \} from "\.\/scorer\.ts"/, "teampacket imports only the scorer assumption type");
 assert.doesNotMatch(teampacketSource, /from "node:fs"|from "fs"|require\(["']fs["']\)/, "teampacket has no filesystem import");

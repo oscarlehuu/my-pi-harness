@@ -1,0 +1,15 @@
+{
+  "task": "Update extensions/foreman/docs/INTERNALS.md to reflect two things the docs are currently stale on (the drift-detector flagged INTERNALS.md after the planner-reuse fix). This is a docs-only task; the doc-er stage at the end is expected to do most/all of the work, but the developer should also make the change so it ships even if doc-er degrades.\n\nWHAT TO DOCUMENT (both are already true in the code — verify against it, cite anchors):\n\n1. PLANNER DRAFT REUSE RULE (shipped in commit 444f6b5): At the Gate-1 planning branch, Foreman now only reuses a persisted planner draft when it is a REAL planner plan. The pure predicate shouldReusePersistedDraft(draft) in planner.ts returns draft?.source === \"planner\"; index.ts uses it at the planning branch (the `const drafted = shouldReusePersistedDraft(persisted) ? persisted : await draftPlannerPlan(...)` line). A persisted draft with source \"fallback\" is treated as absent so a fixed planner gets a fresh re-run; the re-run result is still persisted. Document this in the planner/Gate-1 flow section so future agents know a fallback draft does NOT permanently stick.\n\n2. ADD-A-CREW-ROLE INSTALL STEP (a real footgun hit this session): when you add a NEW crew agent .md under extensions/*/crew/, it is NOT live until ./install.sh is re-run — install.sh symlinks each crew .md per-file into ~/.pi/agent/agents/, so a freshly added role (e.g. doc-er) throws ENOENT (no such file ~/.pi/agent/agents/<role>.md) until linked. Add this to the extension-recipes / NEVER-do (or a \"gotchas\") section: \"Adding a crew role requires re-running ./install.sh before it can be spawned.\"\n\nREQUIREMENTS:\n- Update ONLY extensions/foreman/docs/INTERNALS.md (and you MAY update extensions/foreman/docs/CHARTER.md ONLY if a planner-reuse mention genuinely belongs there; otherwise leave CHARTER alone).\n- Keep INTERNALS.md's existing structure and agent-friendly style (stable headers, file:line/function anchors, dense, NEVER-do where relevant). Update in place; do not restructure.\n- Verify every anchor you add/change against the actual code (shouldReusePersistedDraft in planner.ts, its use in index.ts, the install.sh crew-linking loop). Prefer function-name anchors over brittle line numbers.\n- Do NOT touch code, tests, AGENTS.md, or models.json.\n\nVERIFY: docs-only change; the .pi/foreman.json per-round headless suite must stay green (it is unaffected by markdown). The doc-er stage should also run at the end now that it is linked — this task doubles as a live check that doc-er writes correctly.",
+  "slug": "update-extensions-foreman-docs-internals-md-to-reflect-two-t",
+  "state": "done",
+  "workingDirectory": "/Users/a1241968/Desktop/Oscar/my-pi-harness",
+  "track": "backend",
+  "ownerSessionId": "019ea6c3-032e-768f-9c11-2aa0f6b11eaf",
+  "round": 2,
+  "maxRounds": 3,
+  "lastReviewedHandoffCount": 6,
+  "gate1Approved": true,
+  "gate2Approved": true,
+  "createdAt": "2026-06-09T04:29:14.220Z",
+  "updatedAt": "2026-06-09T04:42:05.760Z"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "claude-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Built-in Tool Renderers for the Claude Studio look",
+  "pi": {
+    "extensions": ["index.ts"]
+  }
+}

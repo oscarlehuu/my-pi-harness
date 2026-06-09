@@ -45,6 +45,8 @@ link "$REPO_DIR/extensions/foreman/docs"      "$AGENT_DIR/foreman/charter"
 mkdir -p "$AGENT_DIR/agents"
 [ -L "$AGENT_DIR/skills" ] && rm "$AGENT_DIR/skills"
 mkdir -p "$AGENT_DIR/skills"
+[ -L "$AGENT_DIR/themes" ] && rm "$AGENT_DIR/themes"
+mkdir -p "$AGENT_DIR/themes"
 for crew in "$REPO_DIR"/extensions/*/crew/; do
   [ -d "$crew" ] || continue
   for agent in "$crew"*.md; do
@@ -59,6 +61,10 @@ for skills in "$REPO_DIR"/extensions/*/skills/; do
     link "${skill%/}" "$AGENT_DIR/skills/$(basename "$skill")"
   done
 done
+for theme in "$REPO_DIR"/extensions/*/themes/*.json "$REPO_DIR"/config/themes/*.json; do
+  [ -f "$theme" ] || continue
+  link "$theme" "$AGENT_DIR/themes/$(basename "$theme")"
+done
 
 # --- Shared infra ---
 link "$REPO_DIR/config/models.json" "$AGENT_DIR/models.json"
@@ -71,6 +77,7 @@ data = json.loads(p.read_text()) if p.exists() else {}
 data["defaultProvider"] = "cliproxy"
 data["defaultModel"] = "claude-opus-4-8"
 data["defaultThinkingLevel"] = "xhigh"
+data["theme"] = "claude-warm-dark"
 p.write_text(json.dumps(data, indent=2) + "\n")
 PY
 

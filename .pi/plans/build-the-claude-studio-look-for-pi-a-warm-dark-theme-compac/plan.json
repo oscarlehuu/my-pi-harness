@@ -1,0 +1,58 @@
+{
+  "summary": "Build the 'Claude Studio' warm-dark look for pi as three jiti-loaded deliverables, all sharing one 51-token palette. (1) config/themes/claude-warm-dark.json (exact provided content) + install.sh changes to symlink themes into ~/.pi/agent/themes and set it as the fresh-install default. (2) A new extensions/claude-studio extension (mirroring session-namer) that re-registers read/bash/edit/write with compact-collapsed/expand-on-demand renderers, delegating execute() to the originals so behavior is unchanged. (3) A clay-toned working-indicator spinner on session_start (message renderer intentionally skipped, NOTE only). Plus a README. Recon confirms all pi exports, types, UI APIs, the install.sh patterns, and the verify harness mechanics. .pi/foreman.json already exists, so existing gates are reflected and not overwritten; the task-specific 'CLAUDE STUDIO OK' verify command is the deliverable's acceptance test (mechanics verified) but is not yet a stored repo command.",
+  "assumptions": [],
+  "nonGoals": [],
+  "alternatives": [],
+  "blastRadius": [],
+  "steps": [
+    "Create config/themes/claude-warm-dark.json with the EXACT provided JSON (51 tokens, $schema, vars, colors, export). Do not alter token values.",
+    "Edit install.sh: after the crew/skills symlink blocks, add an idempotent themes block — mkdir -p \"$AGENT_DIR/themes\"; loop over extensions/*/themes/*.json AND config/themes/*.json, guarding non-matches with the existing `[ -f \"$f\" ] || continue` pattern, and symlink each via the existing link() helper into \"$AGENT_DIR/themes/$(basename ...)\". Keep all existing behavior intact.",
+    "Edit the python3 settings.json heredoc at the bottom of install.sh: add data[\"theme\"] = \"claude-warm-dark\" alongside the existing defaultProvider/defaultModel/defaultThinkingLevel keys so fresh installs select the theme.",
+    "Create extensions/claude-studio/package.json mirroring session-namer (private, type:module, pi.extensions:[\"index.ts\"], descriptive name/version).",
+    "Create extensions/claude-studio/index.ts: import createReadTool/createBashTool/createEditTool/createWriteTool + keyHint from @earendil-works/pi-coding-agent, Text from @earendil-works/pi-tui, and types ReadToolDetails/BashToolDetails/EditToolDetails; const cwd=process.cwd(); build originals once; re-register each tool delegating execute() to its original; implement COLLAPSED one-line renderers (read→'read <path>'/'<n> lines'; bash→'$ <cmd≤80>'/'done'|'exit <code>'+dim lines; edit→'edit <path>'/'+adds' dim ' / ' '-rem' with renderShell:'self'; write→'write <path>'/'wrote <n> lines'|'created') with a dim ` (${keyHint('app.tools.expand','expand')})` hint when collapsed-with-more; EXPANDED detail (read ~15 lines, bash ~20 lines, edit ~40 diff lines colored via toolDiffAdded/Removed/Context, write path+size); handle isPartial ('Reading…/Running…/Editing…/Writing…' in warning); use only theme.fg(...) tokens; Text padding (0,0); defensive optional-chaining so renderResult never throws.",
+    "In the same index.ts, on session_start set ctx.ui.setWorkingIndicator({ frames:[theme.fg('dim','·'),theme.fg('muted','•'),theme.fg('accent','●'),theme.fg('muted','•')], intervalMs:120 }) using theme from ctx.ui.theme. Do NOT implement registerMessageRenderer for core user/assistant — leave a // NOTE comment indicating where custom-message rendering would go.",
+    "Create extensions/claude-studio/README.md describing the warm-dark Claude look, the three pieces (theme/config + tool renderers + spinner), the ADHD principle (collapsed by default, Ctrl+O / app.tools.expand to expand), that tool BEHAVIOR is unchanged (execute delegates to originals), how it composes with the separate statusline extension (both just read theme tokens), and that the theme is selected via settings.json \"theme\":\"claude-warm-dark\" or /settings.",
+    "Run the task verify command and confirm it prints 'CLAUDE STUDIO OK' (validates theme loads through loadThemeFromPath and renders a token, and that the claude-studio default export is a function)."
+  ],
+  "filesLikely": [
+    "config/themes/claude-warm-dark.json (new)",
+    "install.sh (edit: add idempotent themes symlink block + data[\"theme\"]=\"claude-warm-dark\" in settings.json heredoc)",
+    "extensions/claude-studio/package.json (new)",
+    "extensions/claude-studio/index.ts (new)",
+    "extensions/claude-studio/README.md (new)"
+  ],
+  "risks": [
+    ".pi/foreman.json already exists; per instructions existing gates are reflected and NOT overwritten. The task's 'CLAUDE STUDIO OK' verify command had its harness mechanics verified working, but it references files not yet created and is not a stored repo command, so it is deliberately excluded from proposedGates.",
+    "WriteToolDetails is NOT exported by the package; only import ReadToolDetails/BashToolDetails/EditToolDetails. The write renderer must derive line count from args.content / result content (matches the reference example), not from details.",
+    "install.sh idempotency/backward-compat: the new themes loop must reuse the existing link() helper, mkdir -p the themes dir, and guard empty globs with the existing `[ -f ] || continue` style so an absent config/themes or extensions/*/themes never aborts the script (set -euo pipefail is active).",
+    "registerMessageRenderer exists but is for CUSTOM message types only; overriding core user/assistant stream is out of scope — implement spinner only and leave a NOTE comment, per the task.",
+    "The verify harness uses `readlink -f` (GNU-style); it executed successfully on this macOS host during recon, but remains a portability consideration if run on a stock BSD readlink.",
+    "Theme $schema points at a remote GitHub raw URL; loadThemeFromPath validates locally and does not fetch it — confirmed the theme loads and th.fg('accent','x') works.",
+    "No root package.json/tsconfig/build step exists; the extension is jiti-loaded TS at runtime, so there is no compile gate — correctness rests on the runtime verify command and the reviewer judge."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/scorer_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/docer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [],
+    "services": []
+  }
+}

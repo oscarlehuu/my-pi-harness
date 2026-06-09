@@ -1,0 +1,31 @@
+{
+	"$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+	"name": "claude-warm-dark",
+	"vars": {
+		"bg": "#1a1815", "clay": "#d97757", "clayDeep": "#c15f3c", "cream": "#e8e6e3",
+		"sage": "#9bab7a", "coral": "#d97066", "gold": "#d9a866",
+		"slateLight": "#87867f", "slate": "#5e5d59", "slateDim": "#403e39",
+		"surfaceSel": "#2a2620", "surfaceUser": "#232019", "surfaceTool": "#211e19",
+		"surfaceOk": "#1e231a", "surfaceErr": "#2a1c1a", "surfaceMsg": "#241f18"
+	},
+	"colors": {
+		"accent": "clay", "border": "slateDim", "borderAccent": "clay", "borderMuted": "slateDim",
+		"success": "sage", "error": "coral", "warning": "gold", "muted": "slateLight", "dim": "slate",
+		"text": "cream", "thinkingText": "slateLight",
+		"selectedBg": "surfaceSel", "userMessageBg": "surfaceUser", "userMessageText": "cream",
+		"customMessageBg": "surfaceMsg", "customMessageText": "cream", "customMessageLabel": "clay",
+		"toolPendingBg": "surfaceTool", "toolSuccessBg": "surfaceOk", "toolErrorBg": "surfaceErr",
+		"toolTitle": "cream", "toolOutput": "slateLight",
+		"mdHeading": "gold", "mdLink": "clay", "mdLinkUrl": "slate", "mdCode": "sage",
+		"mdCodeBlock": "cream", "mdCodeBlockBorder": "slateDim", "mdQuote": "slateLight",
+		"mdQuoteBorder": "slateDim", "mdHr": "slateDim", "mdListBullet": "clay",
+		"toolDiffAdded": "sage", "toolDiffRemoved": "coral", "toolDiffContext": "slate",
+		"syntaxComment": "slate", "syntaxKeyword": "clay", "syntaxFunction": "gold",
+		"syntaxVariable": "cream", "syntaxString": "sage", "syntaxNumber": "#cba98a",
+		"syntaxType": "gold", "syntaxOperator": "slateLight", "syntaxPunctuation": "slateLight",
+		"thinkingOff": "slateDim", "thinkingMinimal": "slate", "thinkingLow": "#9c8f7f",
+		"thinkingMedium": "gold", "thinkingHigh": "clay", "thinkingXhigh": "clayDeep",
+		"bashMode": "sage"
+	},
+	"export": { "pageBg": "#141312", "cardBg": "#1f1d19", "infoBg": "#2a2218" }
+}

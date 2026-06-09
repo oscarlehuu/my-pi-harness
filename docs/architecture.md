@@ -22,8 +22,16 @@ domain, so `install.sh` symlinks source folders onto the flat names pi expects:
 - `extensions/foreman/docs` -> `~/.pi/agent/foreman/charter` so crew running in any repo can read the
   portable Foreman framework charter at `foreman/charter/CHARTER.md`.
 - `config/models.json` -> `~/.pi/agent/models.json` for shared model routing.
+- `extensions/*/themes/*.json` AND `config/themes/*.json` -> `~/.pi/agent/themes/<name>.json`, one
+  per-file symlink each (same idempotent `link()` helper as crew/skills). `themes/` is a real dir
+  (`mkdir -p`, drop any prior whole-dir symlink) so multiple sources can coexist. The shipped
+  `claude-warm-dark` theme lives in `config/themes/`, parallel to `config/models.json`.
 
 Machine-local `auth.json`, `settings.json`, and `sessions/` remain real files under `~/.pi/agent`.
+The `settings.json` writer heredoc at the bottom of `install.sh` sets `defaultProvider`,
+`defaultModel`, `defaultThinkingLevel`, and `theme` (`"claude-warm-dark"`) so a fresh install selects
+the Claude Studio look; users can override via `/settings`. NEVER hardcode colors in extensions —
+renderers read the active theme's tokens at render time, so changing `theme` reskins everything.
 Normal use does **not** set `PI_CODING_AGENT_DIR`; run `pi` from any project after `./install.sh`.
 Foreman's out-of-tree ledger mirror also lives under `~/.pi/agent/foreman/ledger-mirror/`.
 
@@ -40,8 +48,33 @@ Each domain is a self-contained folder under `extensions/` and registers one or 
 - `grok` — web/X search plus Grok Imagine image/video tools through the subscription proxy.
 - `codex` — ChatGPT/Codex OAuth image generation and edit tools.
 - `antigravity` — Antigravity/Gemini flash-image generation and edit tools through cli-proxy-api.
+- `claude-studio` — warm-dark "Claude Studio" look: re-registers the built-in `read`/`bash`/`edit`/
+  `write` tools with compact, expandable renderers and sets a clay-toned working indicator. Tool
+  BEHAVIOR is unchanged — each re-registered tool delegates `execute()` to the original created via
+  `createReadTool`/`createBashTool`/`createEditTool`/`createWriteTool` (built once at `cwd`); only
+  display changes. Pairs with the `claude-warm-dark` theme; see `extensions/claude-studio/README.md`.
 
 Domains compose at runtime once installed; keep additions domain-scoped and primitive-oriented.
+
+### Claude Studio renderers (ADHD: minimal-by-default, detail-on-demand)
+
+In `extensions/claude-studio/index.ts` the `renderResult(result, { expanded, isPartial }, theme)`
+handlers follow one contract per tool:
+
+- Collapsed (`expanded=false`): exactly one summary line — `read`→`<n> lines`, `bash`→`done`/`exit
+  <code>` + `(<n> lines)`, `edit`→`+<adds> / -<rem>`, `write`→`wrote <n> lines`. When more detail
+  exists, append a dim ` (${keyHint("app.tools.expand","expand")})` hint (Ctrl+O).
+- Expanded (`expanded=true`): `read` first ~15 lines, `bash` first ~20 output lines, `edit` diff
+  capped ~40 lines colored via `toolDiffAdded`/`toolDiffRemoved`/`toolDiffContext`, `write` path+size;
+  each followed by a `... N more` muted line.
+- `isPartial=true`: a single warning-colored `Reading…/Running…/Editing…/Writing…` line.
+
+State transition per result: `isPartial → collapsed → expanded` (toggled by `app.tools.expand`).
+Invariants / NEVER-do: `renderResult` NEVER throws (wrapped in try/catch returning a short fallback
+`Text`); all `result?.details`/`content?.[0]` access is optional-chained; renderers use only
+`theme.fg(...)` tokens (no literal colors). The spinner is set on extension load and re-set on
+`session_start` via `ctx.ui.setWorkingIndicator`. Core user/assistant message stream rendering is
+intentionally NOT overridden (a `// NOTE` in `index.ts` marks where it would go).
 
 ## Live Foreman pipeline
 

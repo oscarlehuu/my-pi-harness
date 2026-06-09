@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-09T09:37:53.251Z",
+  "role": "tester",
+  "round": 3,
+  "sessionId": "057fa4f7-4756-4a48-be01-1d880d2c6bbb",
+  "successState": "success",
+  "summary": "I'll examine the three modified files plus the READMEs to verify the task is fulfilled.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/scorer_test.sh && bash extensions/foreman/test/approvalfriction_test.sh && bash extensions/foreman/test/teampacket_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/docer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman assumption scorer tests passed\nForeman approval friction tests passed\nForeman team question packet tests passed\nForeman reviewer helper tests passed\nForeman doc-er/drift helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll examine the three modified files plus the READMEs to verify the task is fulfilled.\nNow the foreman file. Let me look at the relevant parts.\nAll three deliverables look implemented. Let me verify the foreman done() execute return is unchanged and check the READMEs.\nThe done() at line 1715-1718 still returns the transcript text unchanged. Now the READMEs.\nAll deliverables and docs are in place. Let me run the verify command to confirm modules load.\nLet me do a quick sanity check that the modified modules at least parse correctly.\nAll three deliverables are correctly implemented and the docs are updated. My findings:\n\n**Deliverable 1 (Powerline statusline):** All preserved logic intact — git poll via `execFile` 2.5s with `refreshing` guard, `onBranchChange` subscription, `dispose()` clears interval+unsub, `getContextUsage`, cost/token summation over assistant messages, session name, model+thinking, and the extension-statuses line rendered last (sorted+sanitized). Powerline helpers (`hexToRgb`/`FG`/`BG`/`RST`), the Claude-warm palette, `\\uE0B0` separator + end cap, `PI_STATUSLINE_ASCII` fallback, the grouped 3-line layout, adaptive width tiers (≥90 / 60–90 / <60 collapse), and `truncateToWidth` safety net on every line are all present.\n\n**Deliverable 2 (Foreman collapse):** `renderResult` added to the `name:\"foreman\"` tool; `execute()`/`done()` still return the unchanged transcript text (line 1718). isPartial/collapsed/expanded paths, the exact stage-summary cascade, keyHint expand hint, and try/catch are all correct. No behavior change.\n\n**Deliverable 3 (Spinner):** `pi.ui.setWorkingMessage(\"cooking\")` called on session_start, guarded by `typeof === \"function\"`.\n\n**Docs:** Both READMEs updated as specified.\n\nOne trivial deviation: the `DIM` color const listed in the palette spec isn't defined (it's mentioned in the README but never used in the layout). This is cosmetic and doesn't affect any functional requirement.\n\nVERDICT: PASS"
+}

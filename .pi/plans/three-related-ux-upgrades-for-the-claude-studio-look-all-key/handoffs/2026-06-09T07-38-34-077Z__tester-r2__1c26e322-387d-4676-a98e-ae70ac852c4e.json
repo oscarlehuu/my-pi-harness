@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-06-09T07:38:34.077Z",
+  "role": "tester",
+  "round": 2,
+  "sessionId": "1c26e322-387d-4676-a98e-ae70ac852c4e",
+  "successState": "blocked",
+  "summary": "[reviewer] review: unknown (inconclusive)",
+  "raw": "(no reviewer output; stderr: )"
+}

@@ -1,0 +1,60 @@
+{
+  "summary": "Foreman Gate 1 plan for three keyboard-first 'Claude Studio' UX upgrades (all display-only, no behavior change): (1) replace ONLY the visual assembly in statusline render() with a grouped 3-line adaptive truecolor powerline (inline ANSI, no new deps) while keeping every data source, the git poll, dispose, and the preserved ext-statuses seam identical, plus a PI_STATUSLINE_ASCII=1 glyph fallback and a plain <60-width collapse; (2) add a defensive renderResult to the foreman tool so its transcript is collapsed-by-default with a derived stage summary + Ctrl+O (app.tools.expand) to expand, without touching execute()/done() return; (3) add a guarded pi.ui.setWorkingMessage('cooking') on session_start in claude-studio. Update both READMEs. Verified the loader smoke command prints 'STUDIO PRO OK'.",
+  "assumptions": [],
+  "nonGoals": [],
+  "alternatives": [],
+  "blastRadius": [],
+  "steps": [
+    "statusline/index.ts: add hexToRgb/FG/BG/RST helpers + Claude-warm palette consts (CLAY/DARK/SEL/TOOL/OKBG/CREAM/SLATE/DIM/SAGE/GOLD/CORAL + the #3a2a1f model bg) and seg()/arrow/end-cap helpers at top of factory/module; read const ASCII = process.env.PI_STATUSLINE_ASCII === '1'.",
+    "statusline/index.ts: rewrite ONLY the visual assembly inside render() into 3 left-anchored powerline strips — line1 identity (✎ name on CLAY, fallback 'π pi'); line2 location (⎇ branch + GOLD git indicators on SEL, 📁 cwd on TOOL, home→~); line3 stats (🤖 model • thinking on #3a2a1f, 12-cell ▰▱ bar + NN% SAGE/GOLD/CORAL by >70/>90 on OKBG, ↑in ↓out on SEL, $cost.toFixed(3) on SEL) — reusing existing name/branch/git/cwd/contextUsage/token-sum/cost/model/thinking values and the existing fmt() formatter unchanged.",
+    "statusline/index.ts: implement adaptivity via the real width arg using visibleWidth — >=90 full+full cwd; 60..89 same 3 lines but cwd→~/…/<lastdir> and drop 🤖/📁 emoji (keep text); <60 collapse to 2 plain ASCII lines (no glyphs/bg) 'line1=✎ name · ⎇ branch', 'line2=NN% · model thinking'; in ASCII mode emit colored bg blocks separated by single space with no \\ue0b0 arrows; ALWAYS wrap every pushed line in truncateToWidth(line,width); keep invalidate(){} no-op.",
+    "statusline/index.ts: keep the ext-statuses block (getExtensionStatuses sorted by key, sanitized, truncateToWidth) as the LAST line(s), behavior unchanged; keep refreshGit/execFile/2.5s interval/refreshing guard, onBranchChange unsub, dispose, getContextUsage, getBranch summation, getSessionName, ctx.model+getThinkingLevel all identical.",
+    "foreman/index.ts: extend the pi-tui/pi-coding-agent imports to add { Text } from '@earendil-works/pi-tui' and keyHint from '@earendil-works/pi-coding-agent' (only if not already present).",
+    "foreman/index.ts: add renderResult(result,{expanded,isPartial},theme,_ctx) to the name:'foreman' registerTool (~1523): isPartial→'▾ Foreman running…'; else read result.content[0].text, derive first-match stage summary (GATE 1 / PLAN→'GATE 1 · plan ready — approve or revise', GATE 2 / SHIP→'GATE 2 · ready to ship — approve or revise', SHIPPED→'✓ shipped', 'Task halted'→'■ halted', awaiting_decision|escalat→'? awaiting your decision', else first non-empty line truncated ~80); collapsed=one-line ▸ Foreman · summary (Ctrl+O hint via keyHint('app.tools.expand','expand')); expanded=▾ header + full transcript joined by \\n; wrap whole thing in try/catch returning a short Text; never throw; do NOT change execute()/done() return at ~1700.",
+    "claude-studio/index.ts: in the session_start handler add a guarded call — if (typeof pi.ui?.setWorkingMessage === 'function') pi.ui.setWorkingMessage('cooking') — keeping the existing clay-dot setWorkingIndicator; single fixed lowercase word, no rotation.",
+    "extensions/statusline/README.md: document the new grouped 3-line adaptive powerline (line1 identity, line2 git+path, line3 model+context+tokens+cost), the PI_STATUSLINE_ASCII=1 no-Nerd-Font toggle, that segment colors are Claude-warm by design, and that the foreman/ext-statuses line is still preserved; keep the Performance/git-polling and Foreman-integration sections.",
+    "extensions/claude-studio/README.md: note the spinner now shows clay dots + 'cooking', and that foreman tool output is collapsed-by-default with Ctrl+O (app.tools.expand) to view the full transcript (cross-reference: implemented in the foreman extension).",
+    "Verify: re-run the jiti loader smoke check (theme.loadThemeFromPath + import statusline/claude-studio/foreman default exports as functions) and confirm it prints 'STUDIO PRO OK'; importing only DEFINES the modules, never runs them."
+  ],
+  "filesLikely": [
+    "extensions/statusline/index.ts",
+    "extensions/foreman/index.ts",
+    "extensions/claude-studio/index.ts",
+    "extensions/statusline/README.md",
+    "extensions/claude-studio/README.md"
+  ],
+  "risks": [
+    "Adaptive math depends on visibleWidth/truncateToWidth stripping truecolor ESC[38;2;r;g;bm + ESC[48;2;...m + Nerd Font \\ue0b0 sequences; these are standard CSI/glyphs so should be handled, but the per-line truncateToWidth(line,width) safety net is the guarantee against overflow.",
+    "Wide glyphs (emoji 📁/🤖, powerline \\ue0b0) can be miscounted by cell-width heuristics; mitigated by always truncating each line and by the <60 plain/ASCII collapse and PI_STATUSLINE_ASCII=1 toggle for non-Nerd-Font terminals.",
+    "Must change ONLY the visual assembly in render() — accidental edits to refreshGit/dispose/getBranch summation/ext-statuses would be a regression; keep all data sources and the foreman seam byte-for-byte behavioral.",
+    "foreman renderResult must be display-only: execute() and done() (~1700) return text the controller/LLM relies on and must stay intact; renderResult must be fully try/catch wrapped and never throw.",
+    "Adding imports to foreman/index.ts must not break module load or the existing 'verify' gate (foreman's own test suite, which this task does not modify); the STUDIO PRO OK loader smoke check plus that gate cover load-time regressions.",
+    "Exact semantics of the width arg (full terminal vs footer-available) is assumed to match the current statusline usage; the truncate-per-line net makes an off-by-some-cells assumption safe.",
+    "No new npm deps permitted: truecolor ANSI is built inline; only @earendil-works/* and node builtins (node:child_process already used) — confirmed."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/scorer_test.sh && bash extensions/foreman/test/approvalfriction_test.sh && bash extensions/foreman/test/teampacket_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/docer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [],
+    "services": []
+  }
+}

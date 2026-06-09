@@ -41,8 +41,20 @@ Each domain is a self-contained folder under `extensions/` and registers one or 
 
 - `foreman` — gated planning/dev/test/review/ship orchestration, crew prompts, dashboard, ledger, and
   the framework charter.
-- `statusline` — replaces the default pi footer via `ctx.ui.setFooter()` with a 2-line responsive status
-  footer: Line 1 displays identity/location (session name, git branch, and cwd); Line 2 displays stats (context usage bar, tokens, cost, and model/thinking level) that dynamically drop details (cwd on Line 1; cost then tokens on Line 2) to prevent truncation at narrow widths. Preserves other extensions' status outputs on Line 3+ (no hard cross-extension import) by re-rendering `footerData.getExtensionStatuses()`. Git counts run in a 2.5s background `execFile` poll (never inside the synchronous `render()`); see `extensions/statusline/README.md`.
+- `statusline` — replaces the default pi footer via `ctx.ui.setFooter()` with a grouped, Claude-warm
+  **powerline** footer rendered as three left-anchored truecolor (24-bit ANSI) strips: Line 1 = identity
+  anchor (`✎ <session name>` on clay, falling back to `π pi`); Line 2 = location group (`⎇ <branch>` + git
+  indicators when present, then `📁 <cwd>` with `$HOME` shortened to `~`); Line 3 = stats group (model +
+  thinking, a 12-cell context bar colored sage/gold/coral at >70/>90 thresholds, `↑in ↓out` tokens, and
+  `$cost`). Adaptive on the real `width` (measured with `visibleWidth`): ≥90 full layout; 60–89 shortens
+  cwd and drops the 🤖/📁 emoji; <60 collapses to 2 plain ASCII lines. `PI_STATUSLINE_ASCII=1` disables the
+  Nerd Font separator glyph (`\ue0b0`) for non-Nerd-Font terminals. Every line is passed through
+  `truncateToWidth(line, width)` so no line ever exceeds the terminal width. Segment colors are hardcoded
+  named constants chosen to match the `claude-warm-dark` theme (this is the deliberate exception to the
+  no-hardcoded-colors rule — these are powerline-block backgrounds, not theme tokens). Preserves other
+  extensions' status outputs as the LAST line(s) (no hard cross-extension import) by re-rendering
+  `footerData.getExtensionStatuses()` — the Foreman seam. Git counts run in a 2.5s background `execFile`
+  poll (never inside the synchronous `render()`); see `extensions/statusline/README.md`.
 - `subagent` — spawn primitive for isolated pi subprocess agents.
 - `AskUserQuestion` — structured interactive ask-the-user prompt primitive used for gate relays.
 - `grok` — web/X search plus Grok Imagine image/video tools through the subscription proxy.
@@ -73,8 +85,15 @@ State transition per result: `isPartial → collapsed → expanded` (toggled by 
 Invariants / NEVER-do: `renderResult` NEVER throws (wrapped in try/catch returning a short fallback
 `Text`); all `result?.details`/`content?.[0]` access is optional-chained; renderers use only
 `theme.fg(...)` tokens (no literal colors). The spinner is set on extension load and re-set on
-`session_start` via `ctx.ui.setWorkingIndicator`. Core user/assistant message stream rendering is
+`session_start` via `ctx.ui.setWorkingIndicator`; on `session_start` the extension ALSO calls
+`pi.ui.setWorkingMessage("cooking")` (guarded by `typeof pi.ui?.setWorkingMessage === "function"`) so
+the streaming indicator reads as the clay dots + the lowercase on-brand word `cooking` instead of pi's
+default `Working...` (a single fixed word, no rotation). Core user/assistant message stream rendering is
 intentionally NOT overridden (a `// NOTE` in `index.ts` marks where it would go).
+
+The matching collapse-by-default display for the `foreman` orchestrator tool lives in the `foreman`
+extension (a `renderResult` on the `foreman` tool, display-only — see below and
+`extensions/foreman/docs/INTERNALS.md`), not in claude-studio, to avoid a cross-extension import.
 
 ## Live Foreman pipeline
 

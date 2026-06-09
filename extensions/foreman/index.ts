@@ -62,6 +62,7 @@ import {
 	evaluateRequirementPresence,
 	fallbackPlannerPlan,
 	formatIntentContract,
+	buildTeamQuestionPacketForPlan,
 	renderFounderPlan,
 	serializePlannerPlan,
 	shouldReusePersistedDraft,
@@ -1703,6 +1704,7 @@ export default function (pi: ExtensionAPI) {
 							});
 					writePersistedPlannerDraft(cwd, slug, drafted);
 					const requirementChecks = evaluateRequirementPresence({ requirements: drafted.plan.requirements, env: process.env, toolPresent: toolOnPath });
+					const highRiskPaths = loadHighRiskPaths(cwd);
 					const plan = renderFounderPlan(drafted.plan, {
 						task: state.task,
 						cwd,
@@ -1717,7 +1719,23 @@ export default function (pi: ExtensionAPI) {
 						plannerSource: drafted.source,
 						manifestWriteEligible: drafted.source === "planner",
 						requirementChecks,
-						highRiskPaths: loadHighRiskPaths(cwd),
+						highRiskPaths: highRiskPaths,
+					});
+					const teamQuestionPacket = buildTeamQuestionPacketForPlan(drafted.plan, {
+						task: state.task,
+						cwd,
+						track,
+						maxRounds: state.maxRounds,
+						verifyCommand,
+						developerLabel: track === "frontend" ? "UI developer" : "Developer",
+						developerModel: developer.model,
+						testerModel: tester.model,
+						manifestExists,
+						existingGates: gates,
+						plannerSource: drafted.source,
+						manifestWriteEligible: drafted.source === "planner",
+						requirementChecks,
+						highRiskPaths: highRiskPaths,
 					});
 					fs.writeFileSync(path.join(taskDir(cwd, slug), "plan.md"), `${plan}\n`);
 					state.state = "planning";
@@ -1728,6 +1746,7 @@ export default function (pi: ExtensionAPI) {
 						note: drafted.note,
 						perRoundGates: perRoundGateSummary,
 						requirementGaps: requirementGapNames(requirementChecks),
+						teamQuestionPacket: teamQuestionPacket || undefined,
 					});
 					emit(
 						`\n=== GATE 1 / PLAN — approval needed ===\n${plan}\n` +

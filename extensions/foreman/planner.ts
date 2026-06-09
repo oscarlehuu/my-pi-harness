@@ -25,6 +25,7 @@ import {
 	type AgentTimeouts,
 } from "./agent-timeouts.ts";
 import { scoreAssumptions, type AssumptionCostHints, type RiskBand, type ScoredAssumption } from "./scorer.ts";
+import { buildTeamPacket } from "./teampacket.ts";
 
 export const PLAN_JSON_START = "---PLAN-JSON---";
 export const PLAN_JSON_END = "---END-PLAN-JSON---";
@@ -447,18 +448,27 @@ function renderScoredAssumption(scored: ScoredAssumption): string {
 	return `- (low risk) ${scored.text} _(${meta})_`;
 }
 
-function renderAssumptions(plan: PlannerPlan, context: PlannerContext): string[] {
-	if (!hasContent(plan.assumptions)) return [];
-	if (!hasAssumptionScorerSignal(context)) {
-		return plan.assumptions.map((assumption) => `- ${assumption.text}${assumption.confidence ? ` _(confidence: ${assumption.confidence})_` : ""}`);
-	}
+export function scorePlanAssumptions(plan: PlannerPlan, context: PlannerContext): ScoredAssumption[] {
+	if (!hasContent(plan.assumptions) || !hasAssumptionScorerSignal(context)) return [];
 	return scoreAssumptions(plan.assumptions, {
 		highRiskPaths: context.highRiskPaths ?? [],
 		blastRadius: plan.blastRadius ?? [],
 		filesLikely: plan.filesLikely ?? [],
 		costHint: context.assumptionCostHint,
 		costHints: context.assumptionCostHints,
-	}).map(renderScoredAssumption);
+	});
+}
+
+export function buildTeamQuestionPacketForPlan(plan: PlannerPlan, context: PlannerContext): string {
+	return buildTeamPacket(scorePlanAssumptions(plan, context));
+}
+
+function renderAssumptions(plan: PlannerPlan, context: PlannerContext, scoredAssumptions?: ScoredAssumption[]): string[] {
+	if (!hasContent(plan.assumptions)) return [];
+	if (!hasAssumptionScorerSignal(context)) {
+		return plan.assumptions.map((assumption) => `- ${assumption.text}${assumption.confidence ? ` _(confidence: ${assumption.confidence})_` : ""}`);
+	}
+	return (scoredAssumptions ?? scorePlanAssumptions(plan, context)).map(renderScoredAssumption);
 }
 
 export function renderFounderPlan(plan: PlannerPlan, context: PlannerContext): string {
@@ -474,7 +484,9 @@ export function renderFounderPlan(plan: PlannerPlan, context: PlannerContext): s
 	const requirements = renderRequirementChecks(requirementChecks);
 	const gates = plan.proposedGates.length ? plan.proposedGates.map(formatGate) : ["- (none proposed)"];
 	const understanding = plan.understanding ? [plan.understanding] : [];
-	const assumptions = renderAssumptions(plan, context);
+	const scoredAssumptions = scorePlanAssumptions(plan, context);
+	const assumptions = renderAssumptions(plan, context, scoredAssumptions);
+	const teamQuestionPacket = buildTeamPacket(scoredAssumptions);
 	const nonGoals = (plan.nonGoals ?? []).map((nonGoal) => `- ${nonGoal}`);
 	const alternatives = hasContent(plan.alternatives)
 		? plan.alternatives.map((alternative) => `- ${alternative.approach} — rejected because ${alternative.rejectedReason}`)
@@ -488,6 +500,7 @@ export function renderFounderPlan(plan: PlannerPlan, context: PlannerContext): s
 		plan.summary,
 		...renderOptionalSection("Understanding", understanding),
 		...renderOptionalSection("Assumptions", assumptions),
+		...(teamQuestionPacket ? ["", teamQuestionPacket] : []),
 		...renderOptionalSection("Non-goals", nonGoals),
 		...renderOptionalSection("Alternatives considered", alternatives),
 		...renderOptionalSection("Blast radius", blastRadius),

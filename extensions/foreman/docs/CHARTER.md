@@ -90,3 +90,4 @@ One concept = one ## section. When a section exceeds ~40 lines or needs its own 
 Current sub-pages:
 - [`charter/gate-pipeline.md`](charter/gate-pipeline.md) — generic gate declarations and execution stages.
 - [`charter/definition-of-done.md`](charter/definition-of-done.md) — strict DoD checks, blockers, and recording surfaces.
+- [`INTERNALS.md`](INTERNALS.md) — code-level implementation map for extending Foreman without re-reading all of `index.ts`.

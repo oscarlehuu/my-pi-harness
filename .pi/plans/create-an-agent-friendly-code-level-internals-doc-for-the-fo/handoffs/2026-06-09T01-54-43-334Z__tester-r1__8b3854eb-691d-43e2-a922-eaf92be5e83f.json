@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-09T01:54:43.334Z",
+  "role": "tester",
+  "round": 1,
+  "sessionId": "8b3854eb-691d-43e2-a922-eaf92be5e83f",
+  "successState": "success",
+  "summary": "I'll verify the deliverable exists and check its accuracy against the actual code.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll verify the deliverable exists and check its accuracy against the actual code.\nComprehensive doc. Now let me verify key line references against the actual code.\nGood, INTERNALS.md is created, CHARTER.md modified. Let me verify more line anchors.\nAll anchors verified accurate. Let me check a few control-flow anchors and the CHARTER.md pointer edit.\nAll anchors verified accurate. Confirming no code was modified.\nEverything verifies. Summary:\n\n- **Deliverable exists**: `extensions/foreman/docs/INTERNALS.md` created with all 8 required scope areas (module map, control flow, crew seams, context flow, escalation, gate pipeline/DoD, recipes, NEVER boundaries).\n- **Format met**: stable `## NN -` machine-scannable headers, \"Start here\" section, \"NEVER boundaries\" section, top note splitting INTERNALS/CHARTER/AGENTS concerns, file:line + function-name anchors throughout.\n- **Accuracy verified**: spot-checked ~30 anchors against real code — `runAgent`/`runAgentWithTimeout` (236/422), `--append-system-prompt` (258), round loop `while (state.round < state.maxRounds)` (1582), `formatIntentContract` (planner.ts:348), gate kinds/stages (gates.ts:13-14), `runCommandGates` all-zero rule (228), `AGENT_TIMEOUTS` defaults (54-60), `extractJsonBlock` prose tolerance (486), wholesale devContext rebuild (2106-2110), ground-truth exit code (1814-1818). All correct.\n- **Constraints respected**: index.ts/planner.ts/gates.ts unchanged; only a one-line CHARTER.md \"Docs structure\" pointer added (fits naturally); AGENTS.md untouched.\n- **Gates passed** (exit 0); doc-only change leaves the headless suite unaffected.\n\nMinor nit: in §03 one anchor (`index.ts:1727`) is labeled both \"command gates\" (correct) and \"emits the decision prompt\" (the latter is slightly imprecise), but this is cosmetic and does not undermine accuracy or usefulness.\n\nVERDICT: PASS"
+}

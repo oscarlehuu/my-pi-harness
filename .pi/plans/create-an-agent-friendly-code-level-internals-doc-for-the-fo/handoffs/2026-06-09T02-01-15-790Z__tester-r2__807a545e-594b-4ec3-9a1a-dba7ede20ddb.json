@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-09T02:01:15.790Z",
+  "role": "tester",
+  "round": 2,
+  "sessionId": "807a545e-594b-4ec3-9a1a-dba7ede20ddb",
+  "successState": "success",
+  "summary": "I'll judge whether the deliverable satisfies the task. Let me start by checking the deliverable file and the actual code.",
+  "verification": {
+    "commandsRun": [
+      {
+        "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh",
+        "exitCode": 0,
+        "observation": "[verify]\nForeman planner timeout helper tests passed\nForeman planner helper tests passed\nForeman gate pipeline tests passed\nForeman reviewer helper tests passed\nForeman guard tests passed\nForeman fallback + track tests passed\nForeman ledger tests passed\nForeman dashboard reader tests passed\n"
+      }
+    ]
+  },
+  "raw": "I'll judge whether the deliverable satisfies the task. Let me start by checking the deliverable file and the actual code.\nThe doc exists and is comprehensive. Now let me verify accuracy of the cited anchors against the real code.\nCore anchors verified. Let me check the loop internals, planner, gates, done, and the round-loop re-attachment claims.\nAll verified. Let me check the helper module anchors (planner, gates, done, reviewer, ship, agent-timeouts).\nAll helper anchors verified. Let me spot-check a few remaining key claims: the control-flow round order anchors, the commit staging git add, and the dashboard reader.\nLet me check the escalation consumption block (1707-1730) since the doc cites 1727 for both verify and decision prompt.\nAll anchors verified accurate. Let me confirm no code was modified and check the CHARTER pointer.\nLet me check the unrelated continual-learning README change to ensure it's not part of this task's scope creep.\nAll checks pass. The deliverable is accurate and complete.\n\n**Verification summary:**\n- `extensions/foreman/docs/INTERNALS.md` created — comprehensive code-level map.\n- All spot-checked anchors are accurate against the real code: round loop `index.ts:1582`, `runAgent`/`runAgentWithTimeout` (236/422), `--append-system-prompt` (258), `formatResolvedDecisions` (536), `extractJsonBlock` prose-tolerance (486), per-round re-attach (1605-1610), `testerTask` (1775-1783), wholesale `devContext` rebuild on fail (2106-2110), command-exit ground truth (1814-1818), strict DoD no force-ship (1541-1555), escalation pause (1707-1723), gate kinds/stages (gates.ts:13-14), all-pass rule (gates.ts:228), reviewer parsers, `done.ts` strictness (85-93), `ship.ts` whole-tree filter (110-132), `git add --` path-scoped (1002), timeouts table (agent-timeouts.ts:54-60).\n- All 8 scope items covered; format requirements met (stable `## NN -` headers, \"Start here\", \"NEVER boundaries\", module map, control flow, seams, context flow, escalation channel, gate/DoD, extension recipes).\n- Constraints respected: `index.ts` and other `.ts` code **not modified**; CHARTER.md got only the allowed one-line pointer; AGENTS.md untouched by this task.\n- Per-round command gates passed (exit 0), unaffected since this is doc-only.\n\nThe continual-learning README change is an unrelated pre-existing edit in a different extension, not part of this deliverable.\n\nVERDICT: PASS"
+}

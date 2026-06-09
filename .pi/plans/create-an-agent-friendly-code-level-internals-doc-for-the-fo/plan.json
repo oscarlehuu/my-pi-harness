@@ -1,0 +1,57 @@
+{
+  "summary": "Create extensions/foreman/docs/INTERNALS.md: an agent-friendly, code-level internals map of the Foreman extension (module map, index.ts control flow, crew-invocation seams, founder-context flow + the re-attach invariant, escalation pause/resume channel, gate pipeline + strict DoD, extension recipes, and a NEVER-do boundaries section). Every non-obvious claim carries a verified file:line or function-name anchor. Optionally add a one-line pointer from CHARTER.md's 'Docs structure' section. Doc-only: no code touched; the per-round headless suite is unaffected.",
+  "assumptions": [],
+  "nonGoals": [],
+  "alternatives": [],
+  "blastRadius": [],
+  "steps": [
+    "Create extensions/foreman/docs/INTERNALS.md with stable machine-scannable section headers, a one-line top note (code-level map; CHARTER=kernel; AGENTS=learned process), and a 'Start here' pointer.",
+    "Module map section: one line per file (index.ts orchestrator; planner/gates/reviewer/ship/done/ledger/engagement/guard/fallback/agent-timeouts + dashboard/reader+view as pure/testable helpers), each with a function-name or file:line anchor.",
+    "Control-flow section for index.ts: round loop while (state.round < state.maxRounds) at index.ts:1582; order developer (runAgentWithTimeout ~1610) -> per-round command gates (runCommandGates 'per-round' ~1752) -> tester (testerTask ~1776) -> pre-ship command gates + reviewer judge (~1869-2060) -> Gate 2 awaiting_ship (~2073) -> release action gates (~1573); Gate 1 at ~1394.",
+    "Seams section: runAgent (index.ts:236, thin transport) vs runAgentWithTimeout (index.ts:422, timeout wrapper), AGENT_TIMEOUTS (index.ts:88 from agent-timeouts.ts resolveAllAgentTimeouts), onActivity idle heartbeat (index.ts:336 + recordActivity in the wrapper).",
+    "Founder-context flow section: formatResolvedDecisions (index.ts:536) + formatIntentContract (planner.ts:348) injected into devContext (re-attached each round at index.ts:1605-1607) AND testerTask (index.ts:1776). Call out the invariant: fail-retry rebuilds devContext wholesale (e.g. index.ts:2106/1696), so per-round context MUST be re-attached inside the loop.",
+    "Escalation section: escalate_question registered only under FOREMAN_CREW=1 (index.ts:1149) -> writePendingQuestion -> state awaiting_decision -> resume({answer}) folds into state.resolvedDecisions (index.ts:1512). Reusable pause/resume channel.",
+    "Gate pipeline + DoD section: .pi/foreman.json gates (kind command|judge|action from gates.ts:13, stage per-round|pre-ship|release from gates.ts:14), exit code = ground truth, strict DoD requires clean reviewer APPROVE with no force-ship bypass (done.ts:45-98, index.ts ~1547).",
+    "Extension recipes section ('to add X, touch Y'): new founder-context formatter in planner.ts + re-attach beside formatResolvedDecisions in loop AND testerTask; new timeout-guarded role via AGENT_TIMEOUTS + runAgentWithTimeout; new gate declared in .pi/foreman.json.",
+    "NEVER-do boundaries section: append-only crew system prompts via --append-system-prompt (index.ts:258), never --system-prompt; planner/gates/etc stay pure/node-builtin-only (headlessly testable); commit gate stages only filesChanged + ledger, never git add -A (ship.ts:114 rejects -A); extractJsonBlock must tolerate prose marker mentions (index.ts:486).",
+    "Re-read every cited anchor to confirm accuracy; downgrade brittle line numbers to function-name anchors where the function is easy to grep.",
+    "If it fits naturally, add a single one-line pointer to INTERNALS.md in CHARTER.md's 'Docs structure' section (CHARTER.md:86-88).",
+    "Run the per-round command gate to confirm the headless suite still passes unchanged (doc-only change)."
+  ],
+  "filesLikely": [
+    "extensions/foreman/docs/INTERNALS.md",
+    "extensions/foreman/docs/CHARTER.md"
+  ],
+  "risks": [
+    "Line numbers in index.ts (~2121 lines) can drift with future edits; mitigate by preferring function-name anchors over exact lines wherever the symbol is greppable, and cite ranges as approximate.",
+    "CHARTER.md edit is conditional/optional per the task; will add only a single non-disruptive pointer line in the 'Docs structure' section, and skip it if it does not fit the one-concept-per-section rule.",
+    "Hard constraint: must NOT modify index.ts (or any code) and must NOT touch AGENTS.md; this plan creates only the markdown doc (+ optional one-line CHARTER pointer).",
+    "Accuracy risk if anchors are guessed; every file:line / function reference will be verified against the actual code before inclusion.",
+    "No unit test exists for a markdown doc; correctness is judged by the reviewer against the code, so anchor accuracy and agent-usefulness are the real acceptance bar."
+  ],
+  "proposedGates": [
+    {
+      "name": "verify",
+      "kind": "command",
+      "stage": "per-round",
+      "command": "grep -q \"claude-opus-4-8:xhigh\" extensions/foreman/crew/planner.md && bash extensions/foreman/test/planner_timeout_test.sh && bash extensions/foreman/test/planner_test.sh && bash extensions/foreman/test/gates_test.sh && bash extensions/foreman/test/reviewer_test.sh && bash extensions/foreman/test/guard_test.sh && bash extensions/foreman/test/fallback_test.sh && bash extensions/foreman/test/ledger_test.sh && bash extensions/foreman/dashboard/test/reader_test.sh"
+    },
+    {
+      "name": "review",
+      "kind": "judge",
+      "stage": "pre-ship",
+      "agent": "reviewer"
+    },
+    {
+      "name": "commit",
+      "kind": "action",
+      "stage": "release",
+      "action": "commit"
+    }
+  ],
+  "requirements": {
+    "env": [],
+    "tools": [],
+    "services": []
+  }
+}
